@@ -125,3 +125,4 @@ convex/
 2. Deploy Next.js to Vercel with `NEXT_PUBLIC_CONVEX_URL`, Clerk keys
 3. Set Twilio + `ADMIN_EMAILS` + `CLERK_JWT_ISSUER_DOMAIN` on Convex production
 # membership
+# membership
