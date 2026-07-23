@@ -69,21 +69,9 @@ Open [http://localhost:3002](http://localhost:3002)
 
 ---
 
-## Twilio setup (production OTP)
+## Phone verification (OTP)
 
-1. Create a [Twilio](https://www.twilio.com) account and a **Verify Service**
-2. Add to **Convex dashboard** environment variables:
-   ```env
-   TWILIO_ACCOUNT_SID=...
-   TWILIO_AUTH_TOKEN=...
-   TWILIO_VERIFY_SERVICE_SID=...
-   ```
-3. In `.env.local`, set:
-   ```env
-   NEXT_PUBLIC_USE_DEV_OTP=false
-   ```
-
-With `NEXT_PUBLIC_USE_DEV_OTP=true`, codes are shown on screen instead of sent via SMS.
+OTP codes are generated locally and shown on screen during registration. SMS via Twilio can be wired in later.
 
 ---
 
@@ -132,10 +120,9 @@ convex/
    NEXT_PUBLIC_CONVEX_URL=...
    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=...
    CLERK_SECRET_KEY=...
-   NEXT_PUBLIC_USE_DEV_OTP=false
    ```
 
 ### Convex (backend)
 
 1. `npx convex deploy`
-2. Set on Convex production: Twilio vars, `ADMIN_EMAILS`, `CLERK_JWT_ISSUER_DOMAIN`, `CLERK_WEBHOOK_SECRET`
+2. Set on Convex production: `ADMIN_EMAILS`, `CLERK_JWT_ISSUER_DOMAIN`, `CLERK_WEBHOOK_SECRET`

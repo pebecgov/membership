@@ -1,6 +1,6 @@
 "use client";
 
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import Image from "next/image";
 import { useState } from "react";
 import { api } from "@/convex/_generated/api";
@@ -9,8 +9,6 @@ import { NIGERIAN_STATES } from "@/lib/nigerianStates";
 import { buildMemberId } from "@/lib/memberId";
 
 type Step = "form" | "success";
-
-const USE_DEV_OTP = process.env.NEXT_PUBLIC_USE_DEV_OTP === "true";
 
 function IdCardIcon() {
   return (
@@ -36,10 +34,8 @@ function IdCardIcon() {
 export function RegistrationForm() {
   const associations = useQuery(api.associations.listActive);
 
-  const sendOtp = useAction(api.otp.sendOtp);
-  const verifyOtp = useAction(api.otp.verifyOtp);
-  const sendOtpDev = useMutation(api.otp.sendOtpDev);
-  const verifyOtpDev = useMutation(api.otp.verifyOtpDev);
+  const sendOtp = useMutation(api.otp.sendOtp);
+  const verifyOtp = useMutation(api.otp.verifyOtp);
   const register = useMutation(api.members.register);
 
   const [step, setStep] = useState<Step>("form");
@@ -76,15 +72,9 @@ export function RegistrationForm() {
     setOtpInfo("");
     setLoading(true);
     try {
-      if (USE_DEV_OTP) {
-        const result = await sendOtpDev({ phone });
-        setDevCode(result.devCode ?? null);
-        setOtpInfo("Dev mode: use the code shown below.");
-      } else {
-        await sendOtp({ phone });
-        setDevCode(null);
-        setOtpInfo("We sent a verification code to your phone via SMS.");
-      }
+      const result = await sendOtp({ phone });
+      setDevCode(result.devCode ?? null);
+      setOtpInfo("Use the verification code shown below.");
       setOtpSent(true);
       setPhoneVerified(false);
     } catch (e) {
@@ -98,11 +88,7 @@ export function RegistrationForm() {
     setError("");
     setLoading(true);
     try {
-      if (USE_DEV_OTP) {
-        await verifyOtpDev({ phone, code: otp });
-      } else {
-        await verifyOtp({ phone, code: otp });
-      }
+      await verifyOtp({ phone, code: otp });
       setPhoneVerified(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "OTP verification failed.");
@@ -266,9 +252,9 @@ export function RegistrationForm() {
             >
               Resend code
             </button>
-            {USE_DEV_OTP && devCode && (
+            {devCode && (
               <p className="mt-2 text-xs text-amber-600">
-                Dev mode OTP: <strong>{devCode}</strong>
+                Verification code: <strong>{devCode}</strong>
               </p>
             )}
           </Field>
