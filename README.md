@@ -121,8 +121,21 @@ convex/
 
 ## Deploy
 
+### Vercel (Next.js frontend)
+
+1. Import the repo in Vercel
+2. **Framework Preset:** Next.js
+3. **Output Directory:** leave **empty** (do not set `public` — that causes the build error)
+4. **Build Command:** `npm run build` (default)
+5. Add environment variables in Vercel:
+   ```env
+   NEXT_PUBLIC_CONVEX_URL=...
+   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=...
+   CLERK_SECRET_KEY=...
+   NEXT_PUBLIC_USE_DEV_OTP=false
+   ```
+
+### Convex (backend)
+
 1. `npx convex deploy`
-2. Deploy Next.js to Vercel with `NEXT_PUBLIC_CONVEX_URL`, Clerk keys
-3. Set Twilio + `ADMIN_EMAILS` + `CLERK_JWT_ISSUER_DOMAIN` on Convex production
-# membership
-# membership
+2. Set on Convex production: Twilio vars, `ADMIN_EMAILS`, `CLERK_JWT_ISSUER_DOMAIN`, `CLERK_WEBHOOK_SECRET`
