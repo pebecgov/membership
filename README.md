@@ -1,0 +1,127 @@
+# Association Member ID Portal
+
+Standalone landing page + registration form for generating association member IDs.
+
+**Stack:** Next.js 15 · Convex · Clerk · Twilio Verify (OTP)
+
+---
+
+## Features
+
+- Public registration form with phone OTP verification (Twilio)
+- Admin dashboard at `/admin` (Clerk sign-in)
+- Analytics: totals, daily chart, breakdown by association and state
+- Member registry with search, filters, and CSV export
+- Generated ID format: `{ASSOC}-{STATE}-{INITIALS}-{SEQ}`  
+  Example: `NACCIMA-LAG-JD-0001`
+
+---
+
+## Quick start
+
+```bash
+npm install
+cp .env.example .env.local
+npm run dev
+```
+
+On first run, Convex prompts you to create a project. Then seed associations:
+
+```bash
+npx convex run associations:seed
+```
+
+Open [http://localhost:3002](http://localhost:3002)
+
+---
+
+## Clerk setup (admin login)
+
+1. Create an app at [Clerk Dashboard](https://dashboard.clerk.com)
+2. Add to `.env.local`:
+   ```env
+   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
+   CLERK_SECRET_KEY=sk_test_...
+   ```
+3. In Clerk → **JWT Templates**, create a template named **`convex`** (use Clerk's Convex preset)
+4. In Convex dashboard → **Settings → Environment Variables**, add:
+   ```env
+   CLERK_JWT_ISSUER_DOMAIN=https://your-app.clerk.accounts.dev
+   ADMIN_EMAILS=you@example.com,admin@example.com
+   ```
+   (`CLERK_JWT_ISSUER_DOMAIN` is the Issuer URL from the JWT template)
+
+5. Visit [http://localhost:3002/admin](http://localhost:3002/admin) and sign in with an admin email
+
+### Clerk webhook (sync users to Convex)
+
+1. In Clerk → **Webhooks** → **Add Endpoint**
+2. Set URL to `https://<your-deployment>.convex.site/clerk-users-webhook`  
+   (use the `.convex.site` URL from your Convex dashboard, e.g. `https://affable-oriole-73.convex.site/clerk-users-webhook`)
+3. Subscribe to **user** events (`user.created`, `user.updated`, `user.deleted`)
+4. Copy the **Signing Secret** (`whsec_...`)
+5. In **Convex dashboard** → **Settings → Environment Variables**, add:
+   ```env
+   CLERK_WEBHOOK_SECRET=whsec_...
+   ```
+6. Ensure `convex/http.ts` is deployed — run `npx convex dev` (or `npx convex deploy`) and watch for bundler errors
+7. In Clerk/Svix, **Replay** any failed webhook deliveries after deploy succeeds
+
+---
+
+## Twilio setup (production OTP)
+
+1. Create a [Twilio](https://www.twilio.com) account and a **Verify Service**
+2. Add to **Convex dashboard** environment variables:
+   ```env
+   TWILIO_ACCOUNT_SID=...
+   TWILIO_AUTH_TOKEN=...
+   TWILIO_VERIFY_SERVICE_SID=...
+   ```
+3. In `.env.local`, set:
+   ```env
+   NEXT_PUBLIC_USE_DEV_OTP=false
+   ```
+
+With `NEXT_PUBLIC_USE_DEV_OTP=true`, codes are shown on screen instead of sent via SMS.
+
+---
+
+## Admin dashboard
+
+| Route | Description |
+|-------|-------------|
+| `/admin` | Overview — stats, charts, recent registrations |
+| `/admin/members` | Searchable member table with filters and CSV export |
+| `/admin/associations` | Add associations with logos; view member counts |
+
+Only emails listed in `ADMIN_EMAILS` (Convex env) can access admin data.
+
+---
+
+## Project structure
+
+```
+app/
+  admin/              # Clerk-protected admin UI
+  sign-in/            # Clerk sign-in page
+components/
+  admin/              # Dashboard charts, member table
+  RegistrationForm.tsx
+convex/
+  admin.ts            # Protected analytics + member queries
+  adminAuth.ts        # Admin email allowlist
+  auth.config.ts      # Clerk ↔ Convex auth
+  associations.ts
+  members.ts
+  otp.ts              # Twilio Verify + dev fallback
+```
+
+---
+
+## Deploy
+
+1. `npx convex deploy`
+2. Deploy Next.js to Vercel with `NEXT_PUBLIC_CONVEX_URL`, Clerk keys
+3. Set Twilio + `ADMIN_EMAILS` + `CLERK_JWT_ISSUER_DOMAIN` on Convex production
+# membership
