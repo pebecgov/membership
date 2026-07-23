@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { getAssociationLogoUrl } from "./associationUtils";
 import {
   buildMemberId,
   isValidNin,
@@ -102,7 +103,7 @@ export const register = mutation({
       memberId,
       generatedId,
       associationName: association.name,
-      associationLogoUrl: association.logoUrl,
+      associationLogoUrl: (await getAssociationLogoUrl(ctx, association)) ?? "",
     };
   },
 });
@@ -124,7 +125,9 @@ export const getByGeneratedId = query({
       fullName: member.fullName,
       state: member.state,
       associationName: association?.name ?? member.associationCode,
-      associationLogoUrl: association?.logoUrl ?? null,
+      associationLogoUrl: association
+        ? await getAssociationLogoUrl(ctx, association)
+        : null,
       createdAt: member.createdAt,
     };
   },

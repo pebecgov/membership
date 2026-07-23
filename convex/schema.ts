@@ -6,7 +6,9 @@ export default defineSchema({
     name: v.string(),
     /** Short code used in generated IDs, e.g. NACCIMA */
     code: v.string(),
-    logoUrl: v.string(),
+    /** Legacy external logo URL (seed data / old records) */
+    logoUrl: v.optional(v.string()),
+    logoStorageId: v.optional(v.id("_storage")),
     isActive: v.boolean(),
     createdAt: v.number(),
   })

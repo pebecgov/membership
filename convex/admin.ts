@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { getAssociationLogoUrl } from "./associationUtils";
 import { getAdminIdentity } from "./adminAuth";
 
 function maskNin(nin: string) {
@@ -193,17 +194,19 @@ export const listAssociations = query({
 
     return {
       authorized: true as const,
-      associations: rows
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((a) => ({
-          id: a._id,
-          name: a.name,
-          code: a.code,
-          logoUrl: a.logoUrl,
-          isActive: a.isActive,
-          memberCount: memberCounts.get(a._id) ?? 0,
-          createdAt: a.createdAt,
-        })),
+      associations: await Promise.all(
+        rows
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map(async (a) => ({
+            id: a._id,
+            name: a.name,
+            code: a.code,
+            logoUrl: (await getAssociationLogoUrl(ctx, a)) ?? "",
+            isActive: a.isActive,
+            memberCount: memberCounts.get(a._id) ?? 0,
+            createdAt: a.createdAt,
+          }))
+      ),
     };
   },
 });
@@ -212,7 +215,7 @@ export const createAssociation = mutation({
   args: {
     name: v.string(),
     code: v.string(),
-    logoUrl: v.string(),
+    logoStorageId: v.id("_storage"),
   },
   handler: async (ctx, args) => {
     const access = await getAdminIdentity(ctx);
@@ -222,11 +225,14 @@ export const createAssociation = mutation({
 
     const name = args.name.trim();
     const code = args.code.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    const logoUrl = args.logoUrl.trim();
 
     if (!name) throw new Error("Association name is required.");
     if (!code) throw new Error("Association code is required.");
-    if (!logoUrl) throw new Error("Logo URL is required.");
+
+    const logoUrl = await ctx.storage.getUrl(args.logoStorageId);
+    if (!logoUrl) {
+      throw new Error("Logo upload is invalid. Please upload the image again.");
+    }
 
     const existing = await ctx.db
       .query("associations")
@@ -239,7 +245,7 @@ export const createAssociation = mutation({
     return await ctx.db.insert("associations", {
       name,
       code,
-      logoUrl,
+      logoStorageId: args.logoStorageId,
       isActive: true,
       createdAt: Date.now(),
     });

@@ -1,6 +1,5 @@
 "use client";
 
-import { SignIn } from "@clerk/nextjs";
 import { useConvexAuth } from "convex/react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -17,20 +16,8 @@ function formatDate(ts: number) {
 }
 
 export default function AdminDashboardPage() {
-  const { isAuthenticated, isLoading: authLoading } = useConvexAuth();
+  const { isAuthenticated } = useConvexAuth();
   const dashboard = useQuery(api.admin.getDashboard, isAuthenticated ? {} : "skip");
-
-  if (authLoading) {
-    return <p className="text-sm text-slate-500">Loading…</p>;
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <div className="flex min-h-[70vh] items-center justify-center">
-        <SignIn routing="hash" />
-      </div>
-    );
-  }
 
   if (dashboard === undefined) {
     return <p className="text-sm text-slate-500">Loading dashboard…</p>;

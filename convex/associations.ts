@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { getAssociationLogoUrl } from "./associationUtils";
 
 const SAMPLE_ASSOCIATIONS = [
   {
@@ -26,7 +27,15 @@ export const listActive = query({
       .query("associations")
       .withIndex("byActive", (q) => q.eq("isActive", true))
       .collect();
-    return rows.sort((a, b) => a.name.localeCompare(b.name));
+
+    const associations = await Promise.all(
+      rows.map(async (row) => ({
+        ...row,
+        logoUrl: (await getAssociationLogoUrl(ctx, row)) ?? "",
+      }))
+    );
+
+    return associations.sort((a, b) => a.name.localeCompare(b.name));
   },
 });
 

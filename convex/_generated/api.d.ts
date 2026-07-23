@@ -10,7 +10,9 @@
 
 import type * as admin from "../admin.js";
 import type * as adminAuth from "../adminAuth.js";
+import type * as associationUtils from "../associationUtils.js";
 import type * as associations from "../associations.js";
+import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as members from "../members.js";
 import type * as otp from "../otp.js";
@@ -26,7 +28,9 @@ import type {
 declare const fullApi: ApiFromModules<{
   admin: typeof admin;
   adminAuth: typeof adminAuth;
+  associationUtils: typeof associationUtils;
   associations: typeof associations;
+  files: typeof files;
   http: typeof http;
   members: typeof members;
   otp: typeof otp;

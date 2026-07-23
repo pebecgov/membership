@@ -1,24 +1,8 @@
 "use client";
 
-import { SignIn } from "@clerk/nextjs";
-import { useConvexAuth } from "convex/react";
 import { AssociationsManager } from "@/components/admin/AssociationsManager";
 
 export default function AdminAssociationsPage() {
-  const { isAuthenticated, isLoading } = useConvexAuth();
-
-  if (isLoading) {
-    return <p className="text-sm text-slate-500">Loading…</p>;
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <div className="flex min-h-[70vh] items-center justify-center">
-        <SignIn routing="hash" />
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
       <div>
