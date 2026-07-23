@@ -139,6 +139,7 @@ export const listMembers = query({
         const haystack = [
           member.fullName,
           member.generatedId,
+          member.memberIdNumber,
           member.phone,
           member.state,
           member.associationCode,
@@ -160,6 +161,7 @@ export const listMembers = query({
           return {
             id: member._id,
             generatedId: member.generatedId,
+            memberIdNumber: member.memberIdNumber ?? "",
             fullName: member.fullName,
             state: member.state,
             phone: maskPhone(member.phone),

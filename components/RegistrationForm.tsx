@@ -43,6 +43,7 @@ export function RegistrationForm() {
   const [state, setState] = useState("");
   const [phone, setPhone] = useState("");
   const [nin, setNin] = useState("");
+  const [memberIdNumber, setMemberIdNumber] = useState("");
   const [associationId, setAssociationId] = useState<Id<"associations"> | "">("");
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
@@ -53,6 +54,7 @@ export function RegistrationForm() {
   const [otpInfo, setOtpInfo] = useState("");
   const [success, setSuccess] = useState<{
     generatedId: string;
+    memberIdNumber: string;
     associationName: string;
     associationLogoUrl: string;
   } | null>(null);
@@ -122,10 +124,12 @@ export function RegistrationForm() {
         state,
         phone,
         nin,
+        memberIdNumber,
         associationId,
       });
       setSuccess({
         generatedId: result.generatedId,
+        memberIdNumber: result.memberIdNumber,
         associationName: result.associationName,
         associationLogoUrl: result.associationLogoUrl,
       });
@@ -151,12 +155,16 @@ export function RegistrationForm() {
           />
         </div>
         <p className="text-sm font-medium text-slate-500">Registration complete</p>
-        <h2 className="mt-2 text-2xl font-bold text-[#0A1121]">Your Member ID</h2>
+        <h2 className="mt-2 text-2xl font-bold text-[#0A1121]">Your Network Member ID</h2>
         <p className="mt-4 rounded-lg bg-slate-50 px-4 py-3 font-mono text-lg font-semibold text-[#0A1121]">
           {success.generatedId}
         </p>
         <p className="mt-4 text-sm text-slate-600">
           {success.associationName} · {fullName} · {state}
+        </p>
+        <p className="mt-2 text-sm text-slate-500">
+          Association member ID:{" "}
+          <span className="font-mono font-medium">{success.memberIdNumber}</span>
         </p>
         <p className="mt-6 text-xs text-slate-400">
           Save this ID. A confirmation has been recorded for your phone number.
@@ -304,10 +312,23 @@ export function RegistrationForm() {
           )}
         </Field>
 
+        <Field label="Association Member ID">
+          <input
+            className={inputClass}
+            value={memberIdNumber}
+            onChange={(e) => setMemberIdNumber(e.target.value.toUpperCase())}
+            placeholder="Enter your ID from your association"
+            required
+          />
+          <p className="mt-1 text-xs text-slate-400">
+            The member ID issued to you by your professional association
+          </p>
+        </Field>
+
         {previewMemberId && phoneVerified && (
           <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
             <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              Your membership ID
+              Your network member ID
             </p>
             <p className="mt-1 font-mono text-sm font-semibold text-[#0A1121]">
               {previewMemberId}
