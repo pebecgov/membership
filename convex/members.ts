@@ -112,16 +112,6 @@ export const register = mutation({
       throw new Error("NIN must be exactly 11 digits.");
     }
 
-    const otpSession = await ctx.db
-      .query("otp_sessions")
-      .withIndex("byPhone", (q) => q.eq("phone", phone))
-      .order("desc")
-      .first();
-
-    if (!otpSession?.verified || otpSession.expiresAt < Date.now()) {
-      throw new Error("Phone number is not verified. Complete OTP first.");
-    }
-
     const association = await ctx.db.get(args.associationId);
     if (!association || !association.isActive) {
       throw new Error("Invalid association selected.");
@@ -146,7 +136,7 @@ export const register = mutation({
       associationId: args.associationId,
       associationCode: association.code,
       generatedId,
-      phoneVerified: true,
+      phoneVerified: false,
       createdAt: Date.now(),
     });
 
@@ -165,7 +155,7 @@ export const getByGeneratedId = query({
   handler: async (ctx, { generatedId }) => {
     const member = await ctx.db
       .query("members")
-      .withIndex("byGeneratedId", (q) => q.eq("generatedId", generatedId))
+      .withIndex("byGeneratedId", (q) => q.eq("generatedId", generatedId.trim().toUpperCase()))
       .first();
 
     if (!member) return null;
@@ -182,5 +172,68 @@ export const getByGeneratedId = query({
         : null,
       createdAt: member.createdAt,
     };
+  },
+});
+
+export const verifyMember = query({
+  args: { memberId: v.string() },
+  handler: async (ctx, { memberId }) => {
+    const normalized = memberId.trim().toUpperCase();
+    if (!normalized) {
+      return { status: "invalid" as const };
+    }
+
+    const byNetworkId = await ctx.db
+      .query("members")
+      .withIndex("byGeneratedId", (q) => q.eq("generatedId", normalized))
+      .first();
+
+    if (byNetworkId) {
+      const association = await ctx.db.get(byNetworkId.associationId);
+      return {
+        status: "found" as const,
+        member: {
+          generatedId: byNetworkId.generatedId,
+          memberIdNumber: byNetworkId.memberIdNumber ?? null,
+          fullName: byNetworkId.fullName,
+          state: byNetworkId.state,
+          associationName: association?.name ?? byNetworkId.associationCode,
+          associationLogoUrl: association
+            ? await getAssociationLogoUrl(ctx, association)
+            : null,
+          createdAt: byNetworkId.createdAt,
+        },
+      };
+    }
+
+    const byAssociationId = await ctx.db
+      .query("members")
+      .withIndex("byMemberIdNumber", (q) => q.eq("memberIdNumber", normalized))
+      .collect();
+
+    if (byAssociationId.length === 1) {
+      const member = byAssociationId[0];
+      const association = await ctx.db.get(member.associationId);
+      return {
+        status: "found" as const,
+        member: {
+          generatedId: member.generatedId,
+          memberIdNumber: member.memberIdNumber ?? null,
+          fullName: member.fullName,
+          state: member.state,
+          associationName: association?.name ?? member.associationCode,
+          associationLogoUrl: association
+            ? await getAssociationLogoUrl(ctx, association)
+            : null,
+          createdAt: member.createdAt,
+        },
+      };
+    }
+
+    if (byAssociationId.length > 1) {
+      return { status: "ambiguous" as const };
+    }
+
+    return { status: "not_found" as const };
   },
 });

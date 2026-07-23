@@ -2,18 +2,20 @@
 
 Standalone landing page + registration form for generating association member IDs.
 
-**Stack:** Next.js 15 · Convex · Clerk · Twilio Verify (OTP)
+**Stack:** Next.js 15 · Convex · Clerk
 
 ---
 
 ## Features
 
-- Public registration form with phone OTP verification (Twilio)
-- Admin dashboard at `/admin` (Clerk sign-in)
+- Public registration form with automatic network member ID generation
+- Verify ID page at `/verify` — look up registration by network or association member ID
+- Admin dashboard at `/admin` (Clerk sign-in) with full CRUD for admins
+- Viewer role — read-only access to overview, members, and associations
 - Analytics: totals, daily chart, breakdown by association and state
 - Member registry with search, filters, and CSV export
-- Generated ID format: `{ASSOC}-{STATE}-{INITIALS}-{SEQ}`  
-  Example: `NACCIMA-LAG-JD-0001`
+- Generated ID format: `{ASSOC3}-{STATE3}-{NIN6}`  
+  Example: `NAC-LAG-123456`
 
 ---
 
@@ -48,6 +50,7 @@ Open [http://localhost:3002](http://localhost:3002)
    ```env
    CLERK_JWT_ISSUER_DOMAIN=https://your-app.clerk.accounts.dev
    ADMIN_EMAILS=you@example.com,admin@example.com
+   VIEWER_EMAILS=viewer@example.com
    ```
    (`CLERK_JWT_ISSUER_DOMAIN` is the Issuer URL from the JWT template)
 
@@ -69,9 +72,12 @@ Open [http://localhost:3002](http://localhost:3002)
 
 ---
 
-## Phone verification (OTP)
+## Portal roles
 
-OTP codes are generated locally and shown on screen during registration. SMS via Twilio can be wired in later.
+| Role | Env var | Access |
+|------|---------|--------|
+| **Admin** | `ADMIN_EMAILS` | Overview, members, associations — full CRUD |
+| **Viewer** | `VIEWER_EMAILS` | Overview, members, associations — read-only (no add/edit) |
 
 ---
 
@@ -81,9 +87,9 @@ OTP codes are generated locally and shown on screen during registration. SMS via
 |-------|-------------|
 | `/admin` | Overview — stats, charts, recent registrations |
 | `/admin/members` | Searchable member table with filters and CSV export |
-| `/admin/associations` | Add associations with logos; view member counts |
+| `/admin/associations` | View associations (admins can also add logos) |
 
-Only emails listed in `ADMIN_EMAILS` (Convex env) can access admin data.
+Emails in `ADMIN_EMAILS` or `VIEWER_EMAILS` (Convex env) can access the portal.
 
 ---
 
@@ -98,11 +104,10 @@ components/
   RegistrationForm.tsx
 convex/
   admin.ts            # Protected analytics + member queries
-  adminAuth.ts        # Admin email allowlist
   auth.config.ts      # Clerk ↔ Convex auth
   associations.ts
   members.ts
-  otp.ts              # Twilio Verify + dev fallback
+  adminAuth.ts        # Admin + viewer email allowlists
 ```
 
 ---
@@ -125,4 +130,4 @@ convex/
 ### Convex (backend)
 
 1. `npx convex deploy`
-2. Set on Convex production: `ADMIN_EMAILS`, `CLERK_JWT_ISSUER_DOMAIN`, `CLERK_WEBHOOK_SECRET`
+2. Set on Convex production: `ADMIN_EMAILS`, `VIEWER_EMAILS`, `CLERK_JWT_ISSUER_DOMAIN`, `CLERK_WEBHOOK_SECRET`

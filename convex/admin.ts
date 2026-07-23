@@ -1,7 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { getAssociationLogoUrl } from "./associationUtils";
-import { getAdminIdentity } from "./adminAuth";
+import { getPortalAccess, requireAdmin } from "./adminAuth";
 
 function maskNin(nin: string) {
   if (nin.length <= 4) return "****";
@@ -19,10 +19,21 @@ function startOfDay(ts: number) {
   return d.getTime();
 }
 
+export const getPortalRole = query({
+  args: {},
+  handler: async (ctx) => {
+    const access = await getPortalAccess(ctx);
+    if (!access.authorized) {
+      return { authorized: false as const, reason: access.reason };
+    }
+    return { authorized: true as const, role: access.role };
+  },
+});
+
 export const getDashboard = query({
   args: {},
   handler: async (ctx) => {
-    const access = await getAdminIdentity(ctx);
+    const access = await getPortalAccess(ctx);
     if (!access.authorized) {
       return { authorized: false as const, reason: access.reason };
     }
@@ -81,6 +92,7 @@ export const getDashboard = query({
 
     return {
       authorized: true as const,
+      role: access.role,
       totals: {
         all: members.length,
         today,
@@ -109,7 +121,7 @@ export const listMembers = query({
     toDate: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const access = await getAdminIdentity(ctx);
+    const access = await getPortalAccess(ctx);
     if (!access.authorized) {
       return { authorized: false as const, reason: access.reason, members: [] as const };
     }
@@ -154,6 +166,7 @@ export const listMembers = query({
 
     return {
       authorized: true as const,
+      role: access.role,
       members: members
         .sort((a, b) => b.createdAt - a.createdAt)
         .map((member) => {
@@ -180,7 +193,7 @@ export const listMembers = query({
 export const listAssociations = query({
   args: {},
   handler: async (ctx) => {
-    const access = await getAdminIdentity(ctx);
+    const access = await getPortalAccess(ctx);
     if (!access.authorized) {
       return { authorized: false as const, reason: access.reason, associations: [] as const };
     }
@@ -194,6 +207,7 @@ export const listAssociations = query({
 
     return {
       authorized: true as const,
+      role: access.role,
       associations: await Promise.all(
         rows
           .sort((a, b) => a.name.localeCompare(b.name))
@@ -218,10 +232,7 @@ export const createAssociation = mutation({
     logoStorageId: v.id("_storage"),
   },
   handler: async (ctx, args) => {
-    const access = await getAdminIdentity(ctx);
-    if (!access.authorized) {
-      throw new Error("You are not authorized to manage associations.");
-    }
+    await requireAdmin(ctx);
 
     const name = args.name.trim();
     const code = args.code.toUpperCase().replace(/[^A-Z0-9]/g, "");

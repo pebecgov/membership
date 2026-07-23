@@ -33,9 +33,6 @@ function IdCardIcon() {
 
 export function RegistrationForm() {
   const associations = useQuery(api.associations.listActive);
-
-  const sendOtp = useMutation(api.otp.sendOtp);
-  const verifyOtp = useMutation(api.otp.verifyOtp);
   const register = useMutation(api.members.register);
 
   const [step, setStep] = useState<Step>("form");
@@ -45,13 +42,8 @@ export function RegistrationForm() {
   const [nin, setNin] = useState("");
   const [memberIdNumber, setMemberIdNumber] = useState("");
   const [associationId, setAssociationId] = useState<Id<"associations"> | "">("");
-  const [otp, setOtp] = useState("");
-  const [otpSent, setOtpSent] = useState(false);
-  const [phoneVerified, setPhoneVerified] = useState(false);
-  const [devCode, setDevCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [otpInfo, setOtpInfo] = useState("");
   const [success, setSuccess] = useState<{
     generatedId: string;
     memberIdNumber: string;
@@ -69,51 +61,12 @@ export function RegistrationForm() {
         })
       : null;
 
-  async function handleSendOtp() {
-    setError("");
-    setOtpInfo("");
-    setLoading(true);
-    try {
-      const result = await sendOtp({ phone });
-      setDevCode(result.devCode ?? null);
-      setOtpInfo("Use the verification code shown below.");
-      setOtpSent(true);
-      setPhoneVerified(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to send OTP.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleVerifyOtp() {
-    setError("");
-    setLoading(true);
-    try {
-      await verifyOtp({ phone, code: otp });
-      setPhoneVerified(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "OTP verification failed.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
 
     if (!associationId) {
       setError("Select your professional association.");
-      return;
-    }
-
-    if (!phoneVerified) {
-      if (phone.length < 10) {
-        setError("Enter a valid phone number.");
-        return;
-      }
-      await handleSendOtp();
       return;
     }
 
@@ -167,7 +120,7 @@ export function RegistrationForm() {
           <span className="font-mono font-medium">{success.memberIdNumber}</span>
         </p>
         <p className="mt-6 text-xs text-slate-400">
-          Save this ID. A confirmation has been recorded for your phone number.
+          Save this ID. You can verify it anytime on the Verify ID page.
         </p>
       </div>
     );
@@ -217,60 +170,13 @@ export function RegistrationForm() {
             <input
               className={inputClass}
               value={phone}
-              onChange={(e) => {
-                setPhone(e.target.value.replace(/\D/g, "").slice(0, 11));
-                setOtpSent(false);
-                setPhoneVerified(false);
-              }}
+              onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 11))}
               placeholder="0800 000 0000"
               inputMode="numeric"
               required
             />
           </Field>
         </div>
-
-        {otpSent && !phoneVerified && (
-          <Field label="Verification Code">
-            {otpInfo && (
-              <p className="mb-2 text-sm text-emerald-700">{otpInfo}</p>
-            )}
-            <div className="flex gap-2">
-              <input
-                className={inputClass}
-                value={otp}
-                onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                placeholder="Enter 6-digit code"
-                inputMode="numeric"
-                maxLength={6}
-              />
-              <button
-                type="button"
-                onClick={handleVerifyOtp}
-                disabled={loading || otp.length < 4}
-                className={btnSecondary}
-              >
-                Verify
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={handleSendOtp}
-              disabled={loading || phone.length < 10}
-              className="mt-2 text-xs font-medium text-[#0A1121] underline-offset-2 hover:underline disabled:opacity-50"
-            >
-              Resend code
-            </button>
-            {devCode && (
-              <p className="mt-2 text-xs text-amber-600">
-                Verification code: <strong>{devCode}</strong>
-              </p>
-            )}
-          </Field>
-        )}
-
-        {phoneVerified && (
-          <p className="text-sm font-medium text-emerald-700">✓ Phone number verified</p>
-        )}
 
         <Field label="National Identification Number (NIN)">
           <input
@@ -325,7 +231,7 @@ export function RegistrationForm() {
           </p>
         </Field>
 
-        {previewMemberId && phoneVerified && (
+        {previewMemberId && (
           <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
             <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
               Your network member ID
@@ -334,7 +240,8 @@ export function RegistrationForm() {
               {previewMemberId}
             </p>
             <p className="mt-1 text-xs text-slate-400">
-              Generated from association, state, and the last 6 digits of your NIN. Assigned on submit after duplicate checks.
+              Generated from association, state, and the last 6 digits of your NIN. Assigned on
+              submit after duplicate checks.
             </p>
           </div>
         )}
@@ -347,10 +254,6 @@ export function RegistrationForm() {
           <span>{loading ? "Processing…" : "Generate My ID"}</span>
           {!loading && <IdCardIcon />}
         </button>
-
-        <p className="text-center text-xs text-slate-400">
-          Secure verification via national identity database.
-        </p>
       </div>
     </form>
   );
@@ -365,9 +268,7 @@ function Field({
 }) {
   return (
     <div>
-      <label className="mb-1.5 block text-sm font-semibold text-[#0A1121]">
-        {label}
-      </label>
+      <label className="mb-1.5 block text-sm font-semibold text-[#0A1121]">{label}</label>
       {children}
     </div>
   );
@@ -378,6 +279,3 @@ const inputClass =
 
 const btnPrimary =
   "flex w-full items-center justify-center gap-2 rounded-md bg-[#0A1121] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#1a2235] disabled:cursor-not-allowed disabled:opacity-50";
-
-const btnSecondary =
-  "shrink-0 rounded-md border border-[#0A1121] px-4 py-2.5 text-sm font-medium text-[#0A1121] transition hover:bg-slate-50 disabled:opacity-50";

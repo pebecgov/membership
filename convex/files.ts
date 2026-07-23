@@ -1,16 +1,12 @@
 import { mutation } from "./_generated/server";
-import { getAdminIdentity } from "./adminAuth";
+import { requireAdmin } from "./adminAuth";
 
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 
 export const generateLogoUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {
-    const access = await getAdminIdentity(ctx);
-    if (!access.authorized) {
-      throw new Error("You are not authorized to upload association logos.");
-    }
-
+    await requireAdmin(ctx);
     return await ctx.storage.generateUploadUrl();
   },
 });

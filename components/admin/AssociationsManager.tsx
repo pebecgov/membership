@@ -129,8 +129,11 @@ export function AssociationsManager() {
     return <AdminAccessMessage reason={result.reason} />;
   }
 
+  const isAdmin = result.role === "admin";
+
   return (
     <div className="space-y-6">
+      {isAdmin && (
       <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-lg font-semibold text-[#0A1121]">Add association</h2>
         <p className="mt-1 text-sm text-slate-500">
@@ -219,6 +222,7 @@ export function AssociationsManager() {
           </button>
         </form>
       </div>
+      )}
 
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4">
@@ -241,7 +245,7 @@ export function AssociationsManager() {
               {result.associations.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-5 py-8 text-center text-slate-400">
-                    No associations yet. Add one above.
+                    No associations yet.{isAdmin ? " Add one above." : ""}
                   </td>
                 </tr>
               ) : (
