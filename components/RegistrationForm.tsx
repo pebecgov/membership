@@ -6,6 +6,7 @@ import { useState } from "react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { NIGERIAN_STATES } from "@/lib/nigerianStates";
+import { buildMemberId } from "@/lib/memberId";
 
 type Step = "form" | "success";
 
@@ -46,7 +47,6 @@ export function RegistrationForm() {
   const [state, setState] = useState("");
   const [phone, setPhone] = useState("");
   const [nin, setNin] = useState("");
-  const [memberIdNumber, setMemberIdNumber] = useState("");
   const [associationId, setAssociationId] = useState<Id<"associations"> | "">("");
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
@@ -60,6 +60,16 @@ export function RegistrationForm() {
     associationName: string;
     associationLogoUrl: string;
   } | null>(null);
+
+  const selectedAssociation = associations?.find((assoc) => assoc._id === associationId);
+  const previewMemberId =
+    selectedAssociation && state && nin.length === 11
+      ? buildMemberId({
+          associationName: selectedAssociation.name,
+          state,
+          nin,
+        })
+      : null;
 
   async function handleSendOtp() {
     setError("");
@@ -126,7 +136,6 @@ export function RegistrationForm() {
         state,
         phone,
         nin,
-        memberIdNumber,
         associationId,
       });
       setSuccess({
@@ -163,11 +172,6 @@ export function RegistrationForm() {
         <p className="mt-4 text-sm text-slate-600">
           {success.associationName} · {fullName} · {state}
         </p>
-        {memberIdNumber && (
-          <p className="mt-2 text-sm text-slate-500">
-            Member ID number: <span className="font-mono font-medium">{memberIdNumber}</span>
-          </p>
-        )}
         <p className="mt-6 text-xs text-slate-400">
           Save this ID. A confirmation has been recorded for your phone number.
         </p>
@@ -314,15 +318,19 @@ export function RegistrationForm() {
           )}
         </Field>
 
-        <Field label="Member ID Number">
-          <input
-            className={inputClass}
-            value={memberIdNumber}
-            onChange={(e) => setMemberIdNumber(e.target.value.toUpperCase())}
-            placeholder="Enter your association member ID"
-            required
-          />
-        </Field>
+        {previewMemberId && phoneVerified && (
+          <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Your membership ID
+            </p>
+            <p className="mt-1 font-mono text-sm font-semibold text-[#0A1121]">
+              {previewMemberId}
+            </p>
+            <p className="mt-1 text-xs text-slate-400">
+              Generated from association, state, and the last 6 digits of your NIN. Assigned on submit after duplicate checks.
+            </p>
+          </div>
+        )}
 
         {error && (
           <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>

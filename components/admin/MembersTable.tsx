@@ -37,18 +37,8 @@ export function MembersTable() {
 
   const exportCsv = useMemo(() => {
     if (!members?.length) return "";
-    const headers = [
-      "Member ID Number",
-      "Portal ID",
-      "Full Name",
-      "State",
-      "Association",
-      "Phone",
-      "NIN",
-      "Registered",
-    ];
+    const headers = ["Member ID", "Full Name", "State", "Association", "Phone", "NIN", "Registered"];
     const rows = members.map((m) => [
-      m.memberIdNumber,
       m.generatedId,
       m.fullName,
       m.state,
@@ -141,8 +131,7 @@ export function MembersTable() {
           <table className="min-w-full text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="px-4 py-3 font-semibold">Member ID Number</th>
-                <th className="px-4 py-3 font-semibold">Portal ID</th>
+                <th className="px-4 py-3 font-semibold">Member ID</th>
                 <th className="px-4 py-3 font-semibold">Name</th>
                 <th className="px-4 py-3 font-semibold">Association</th>
                 <th className="px-4 py-3 font-semibold">State</th>
@@ -154,22 +143,19 @@ export function MembersTable() {
             <tbody>
               {membersResult === undefined ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
+                  <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
                     Loading members…
                   </td>
                 </tr>
               ) : members.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
+                  <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
                     No members match your filters.
                   </td>
                 </tr>
               ) : (
                 members.map((member) => (
                   <tr key={member.id} className="border-b border-slate-100 hover:bg-slate-50/80">
-                    <td className="px-4 py-3 font-mono text-xs font-medium text-slate-700">
-                      {member.memberIdNumber || "—"}
-                    </td>
                     <td className="px-4 py-3 font-mono text-xs font-semibold text-[#0A1121]">
                       {member.generatedId}
                     </td>

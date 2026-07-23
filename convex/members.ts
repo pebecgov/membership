@@ -1,5 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import { getAssociationLogoUrl } from "./associationUtils";
 import {
   buildMemberId,
@@ -8,13 +10,78 @@ import {
   normalizePhone,
 } from "./utils";
 
+async function assertNoDuplicateRegistration(
+  ctx: MutationCtx,
+  args: {
+    fullName: string;
+    state: string;
+    phone: string;
+    nin: string;
+    associationId: Id<"associations">;
+    associationName: string;
+  }
+) {
+  const fullName = args.fullName.trim();
+  const normalizedName = fullName.toLowerCase();
+
+  const existingByPhone = await ctx.db
+    .query("members")
+    .withIndex("byPhone", (q) => q.eq("phone", args.phone))
+    .first();
+  if (existingByPhone) {
+    throw new Error("This phone number is already registered.");
+  }
+
+  const existingByNin = await ctx.db
+    .query("members")
+    .withIndex("byNin", (q) => q.eq("nin", args.nin))
+    .first();
+  if (existingByNin) {
+    throw new Error("This NIN is already registered.");
+  }
+
+  const generatedId = buildMemberId({
+    associationName: args.associationName,
+    state: args.state,
+    nin: args.nin,
+  });
+
+  const existingByGeneratedId = await ctx.db
+    .query("members")
+    .withIndex("byGeneratedId", (q) => q.eq("generatedId", generatedId))
+    .first();
+  if (existingByGeneratedId) {
+    throw new Error(
+      "A member with this membership ID already exists. If you believe this is an error, contact support."
+    );
+  }
+
+  const membersInAssociation = await ctx.db
+    .query("members")
+    .withIndex("byAssociation", (q) => q.eq("associationId", args.associationId))
+    .collect();
+
+  const exactDuplicate = membersInAssociation.find(
+    (member) =>
+      member.fullName.trim().toLowerCase() === normalizedName &&
+      member.state === args.state &&
+      member.phone === args.phone &&
+      member.nin === args.nin
+  );
+
+  if (exactDuplicate) {
+    throw new Error("A registration with these exact details already exists.");
+  }
+
+  return generatedId;
+}
+
 export const register = mutation({
   args: {
     fullName: v.string(),
     state: v.string(),
     phone: v.string(),
     nin: v.string(),
-    memberIdNumber: v.string(),
     associationId: v.id("associations"),
   },
   handler: async (ctx, args) => {
@@ -22,11 +89,9 @@ export const register = mutation({
     const state = args.state.trim();
     const phone = normalizePhone(args.phone);
     const nin = args.nin.replace(/\s/g, "");
-    const memberIdNumber = args.memberIdNumber.trim().toUpperCase();
 
     if (!fullName) throw new Error("Name is required.");
     if (!state) throw new Error("State is required.");
-    if (!memberIdNumber) throw new Error("Member ID number is required.");
     if (!isValidNigerianPhone(phone)) {
       throw new Error("Enter a valid Nigerian phone number.");
     }
@@ -49,49 +114,20 @@ export const register = mutation({
       throw new Error("Invalid association selected.");
     }
 
-    const existingByPhone = await ctx.db
-      .query("members")
-      .withIndex("byPhone", (q) => q.eq("phone", phone))
-      .first();
-    if (existingByPhone) {
-      throw new Error("This phone number is already registered.");
-    }
-
-    const membersInAssoc = await ctx.db
-      .query("members")
-      .withIndex("byAssociation", (q) => q.eq("associationId", args.associationId))
-      .collect();
-
-    const sequence = membersInAssoc.length + 1;
-    let generatedId = buildMemberId({
-      associationCode: association.code,
-      state,
+    const generatedId = await assertNoDuplicateRegistration(ctx, {
       fullName,
-      sequence,
+      state,
+      phone,
+      nin,
+      associationId: args.associationId,
+      associationName: association.name,
     });
-
-    let suffix = 0;
-    while (
-      await ctx.db
-        .query("members")
-        .withIndex("byGeneratedId", (q) => q.eq("generatedId", generatedId))
-        .first()
-    ) {
-      suffix += 1;
-      generatedId = buildMemberId({
-        associationCode: association.code,
-        state,
-        fullName,
-        sequence: sequence + suffix,
-      });
-    }
 
     const memberId = await ctx.db.insert("members", {
       fullName,
       state,
       phone,
       nin,
-      memberIdNumber,
       associationId: args.associationId,
       associationCode: association.code,
       generatedId,
@@ -121,7 +157,6 @@ export const getByGeneratedId = query({
     const association = await ctx.db.get(member.associationId);
     return {
       generatedId: member.generatedId,
-      memberIdNumber: member.memberIdNumber,
       fullName: member.fullName,
       state: member.state,
       associationName: association?.name ?? member.associationCode,

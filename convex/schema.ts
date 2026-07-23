@@ -29,6 +29,7 @@ export default defineSchema({
   })
     .index("byGeneratedId", ["generatedId"])
     .index("byPhone", ["phone"])
+    .index("byNin", ["nin"])
     .index("byMemberIdNumber", ["memberIdNumber"])
     .index("byAssociation", ["associationId"]),
 

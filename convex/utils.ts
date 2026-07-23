@@ -2,26 +2,10 @@
 import { STATE_CODES } from "../lib/nigerianStates";
 
 export { NIGERIAN_STATES } from "../lib/nigerianStates";
+export { buildMemberId, firstThreeLetters } from "../lib/memberId";
 
 export function getStateCode(state: string): string {
   return STATE_CODES[state] ?? state.slice(0, 3).toUpperCase();
-}
-
-/** e.g. NACCIMA-LAG-JD-0001 */
-export function buildMemberId(params: {
-  associationCode: string;
-  state: string;
-  fullName: string;
-  sequence: number;
-}): string {
-  const stateCode = getStateCode(params.state);
-  const parts = params.fullName.trim().split(/\s+/).filter(Boolean);
-  const initials =
-    parts.length >= 2
-      ? `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
-      : (parts[0]?.slice(0, 2) ?? "XX").toUpperCase();
-  const seq = String(params.sequence).padStart(4, "0");
-  return `${params.associationCode.toUpperCase()}-${stateCode}-${initials}-${seq}`;
 }
 
 export function normalizePhone(phone: string): string {
