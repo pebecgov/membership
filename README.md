@@ -14,8 +14,8 @@ Standalone landing page + registration form for generating association member ID
 - Viewer role — read-only access to overview, members, and associations
 - Analytics: totals, daily chart, breakdown by association and state
 - Member registry with search, filters, and CSV export
-- Generated ID format: `{ASSOC3}-{STATE3}-{NIN6}`  
-  Example: `NAC-LAG-123456`
+- Generated ID format: `{ASSOC3}-{STATE3}-{NIN7}`  
+  Example: `NAC-LAG-1234567`
 
 ---
 

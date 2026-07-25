@@ -42,7 +42,7 @@ export function VerifyIdForm() {
             className={inputClass}
             value={memberId}
             onChange={(e) => setMemberId(e.target.value.toUpperCase())}
-            placeholder="e.g. NAC-LAG-123456"
+            placeholder="e.g. NAC-LAG-1234567"
             required
           />
           <p className="mt-1 text-xs text-slate-400">

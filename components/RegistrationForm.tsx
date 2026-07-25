@@ -240,7 +240,7 @@ export function RegistrationForm() {
               {previewMemberId}
             </p>
             <p className="mt-1 text-xs text-slate-400">
-              Generated from association, state, and the last 6 digits of your NIN. Assigned on
+              Generated from association, state, and the last 7 digits of your NIN. Assigned on
               submit after duplicate checks.
             </p>
           </div>
