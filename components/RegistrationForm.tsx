@@ -46,7 +46,7 @@ export function RegistrationForm() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState<{
     generatedId: string;
-    memberIdNumber: string;
+    memberIdNumber: string | null;
     associationName: string;
     associationLogoUrl: string;
   } | null>(null);
@@ -77,7 +77,7 @@ export function RegistrationForm() {
         state,
         phone,
         nin,
-        memberIdNumber,
+        memberIdNumber: memberIdNumber || undefined,
         associationId,
       });
       setSuccess({
@@ -115,10 +115,12 @@ export function RegistrationForm() {
         <p className="mt-4 text-sm text-slate-600">
           {success.associationName} · {fullName} · {state}
         </p>
-        <p className="mt-2 text-sm text-slate-500">
-          Association member ID:{" "}
-          <span className="font-mono font-medium">{success.memberIdNumber}</span>
-        </p>
+        {success.memberIdNumber && (
+          <p className="mt-2 text-sm text-slate-500">
+            Association member ID:{" "}
+            <span className="font-mono font-medium">{success.memberIdNumber}</span>
+          </p>
+        )}
         <p className="mt-6 text-xs text-slate-400">
           Save this ID. You can verify it anytime on the Verify ID page.
         </p>
@@ -218,16 +220,15 @@ export function RegistrationForm() {
           )}
         </Field>
 
-        <Field label="Association Member ID">
+        <Field label="Association Member ID (optional)">
           <input
             className={inputClass}
             value={memberIdNumber}
             onChange={(e) => setMemberIdNumber(e.target.value.toUpperCase())}
-            placeholder="Enter your ID from your association"
-            required
+            placeholder="Enter your ID from your association, if you have one"
           />
           <p className="mt-1 text-xs text-slate-400">
-            The member ID issued to you by your professional association
+            Optional — the member ID issued by your professional association
           </p>
         </Field>
 
