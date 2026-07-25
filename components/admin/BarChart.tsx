@@ -14,7 +14,7 @@ export function BarChart({
   const max = Math.max(...items.map((i) => i.count), 1);
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
       <h3 className="text-sm font-semibold text-[#0A1121]">{title}</h3>
       {items.length === 0 ? (
         <p className="mt-6 text-sm text-slate-400">{emptyMessage}</p>

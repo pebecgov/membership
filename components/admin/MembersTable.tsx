@@ -116,23 +116,23 @@ export function MembersTable() {
         </div>
       )}
 
-      <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+      <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-[#0A1121]">Member registry</h2>
+            <h2 className="text-base font-semibold text-[#0A1121] sm:text-lg">Member registry</h2>
             <p className="text-sm text-slate-500">Filter and export registered members</p>
           </div>
           <button
             type="button"
             onClick={handleExport}
             disabled={!members?.length}
-            className="rounded-md border border-[#0A1121] px-4 py-2 text-sm font-medium text-[#0A1121] transition hover:bg-slate-50 disabled:opacity-40"
+            className="w-full rounded-md border border-[#0A1121] px-4 py-2 text-sm font-medium text-[#0A1121] transition hover:bg-slate-50 disabled:opacity-40 sm:w-auto"
           >
             Export CSV
           </button>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <input
             className={inputClass}
             placeholder="Search name, ID, phone…"
@@ -179,69 +179,96 @@ export function MembersTable() {
       )}
 
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3 font-semibold">Network ID</th>
-                <th className="px-4 py-3 font-semibold">Association ID</th>
-                <th className="px-4 py-3 font-semibold">Name</th>
-                <th className="px-4 py-3 font-semibold">Association</th>
-                <th className="px-4 py-3 font-semibold">State</th>
-                <th className="px-4 py-3 font-semibold">Phone</th>
-                <th className="px-4 py-3 font-semibold">NIN</th>
-                <th className="px-4 py-3 font-semibold">Registered</th>
-                {isAdmin && <th className="px-4 py-3 font-semibold">Actions</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {membersResult === undefined ? (
-                <tr>
-                  <td colSpan={isAdmin ? 9 : 8} className="px-4 py-8 text-center text-slate-400">
-                    Loading members…
-                  </td>
-                </tr>
-              ) : members.length === 0 ? (
-                <tr>
-                  <td colSpan={isAdmin ? 9 : 8} className="px-4 py-8 text-center text-slate-400">
-                    No members match your filters.
-                  </td>
-                </tr>
-              ) : (
-                members.map((member) => (
-                  <tr key={member.id} className="border-b border-slate-100 hover:bg-slate-50/80">
-                    <td className="px-4 py-3 font-mono text-xs font-semibold text-[#0A1121]">
-                      {member.generatedId}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-700">
-                      {member.memberIdNumber || "—"}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-slate-800">{member.fullName}</td>
-                    <td className="px-4 py-3 text-slate-600">{member.associationName}</td>
-                    <td className="px-4 py-3 text-slate-600">{member.state}</td>
-                    <td className="px-4 py-3 text-slate-600">{member.phone}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-500">{member.nin}</td>
-                    <td className="px-4 py-3 text-slate-500">{formatDate(member.createdAt)}</td>
-                    {isAdmin && (
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleDelete(member.id, member.generatedId, member.fullName)
-                          }
-                          disabled={deletingId === member.id}
-                          className="rounded-md border border-red-300 px-2.5 py-1 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:opacity-50"
-                        >
-                          {deletingId === member.id ? "Deleting…" : "Delete"}
-                        </button>
-                      </td>
+        {membersResult === undefined ? (
+          <p className="px-4 py-8 text-center text-sm text-slate-400 sm:px-5">Loading members…</p>
+        ) : members.length === 0 ? (
+          <p className="px-4 py-8 text-center text-sm text-slate-400 sm:px-5">
+            No members match your filters.
+          </p>
+        ) : (
+          <>
+            <div className="divide-y divide-slate-100 md:hidden">
+              {members.map((member) => (
+                <div key={member.id} className="space-y-2 px-4 py-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-mono text-xs font-semibold text-[#0A1121]">{member.generatedId}</p>
+                    {member.memberIdNumber && (
+                      <p className="shrink-0 font-mono text-[10px] text-slate-500">{member.memberIdNumber}</p>
                     )}
+                  </div>
+                  <p className="font-medium text-slate-800">{member.fullName}</p>
+                  <p className="text-sm text-slate-600">{member.associationName}</p>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                    <span>{member.state}</span>
+                    <span>{member.phone}</span>
+                    <span className="font-mono">NIN {member.nin}</span>
+                  </div>
+                  <p className="text-xs text-slate-400">{formatDate(member.createdAt)}</p>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(member.id, member.generatedId, member.fullName)}
+                      disabled={deletingId === member.id}
+                      className="mt-1 w-full rounded-md border border-red-300 px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:opacity-50 sm:w-auto"
+                    >
+                      {deletingId === member.id ? "Deleting…" : "Delete"}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="hidden overflow-x-auto md:block">
+              <table className="min-w-full text-left text-sm">
+                <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3 font-semibold">Network ID</th>
+                    <th className="px-4 py-3 font-semibold">Association ID</th>
+                    <th className="px-4 py-3 font-semibold">Name</th>
+                    <th className="px-4 py-3 font-semibold">Association</th>
+                    <th className="px-4 py-3 font-semibold">State</th>
+                    <th className="px-4 py-3 font-semibold">Phone</th>
+                    <th className="px-4 py-3 font-semibold">NIN</th>
+                    <th className="px-4 py-3 font-semibold">Registered</th>
+                    {isAdmin && <th className="px-4 py-3 font-semibold">Actions</th>}
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {members.map((member) => (
+                    <tr key={member.id} className="border-b border-slate-100 hover:bg-slate-50/80">
+                      <td className="px-4 py-3 font-mono text-xs font-semibold text-[#0A1121]">
+                        {member.generatedId}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-slate-700">
+                        {member.memberIdNumber || "—"}
+                      </td>
+                      <td className="px-4 py-3 font-medium text-slate-800">{member.fullName}</td>
+                      <td className="px-4 py-3 text-slate-600">{member.associationName}</td>
+                      <td className="px-4 py-3 text-slate-600">{member.state}</td>
+                      <td className="px-4 py-3 text-slate-600">{member.phone}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-slate-500">{member.nin}</td>
+                      <td className="px-4 py-3 text-slate-500">{formatDate(member.createdAt)}</td>
+                      {isAdmin && (
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleDelete(member.id, member.generatedId, member.fullName)
+                            }
+                            disabled={deletingId === member.id}
+                            className="rounded-md border border-red-300 px-2.5 py-1 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:opacity-50"
+                          >
+                            {deletingId === member.id ? "Deleting…" : "Delete"}
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
         {membersResult && membersResult.authorized && (
           <div className="border-t border-slate-200 px-4 py-3 text-xs text-slate-500">
             Showing {members.length} member{members.length === 1 ? "" : "s"}

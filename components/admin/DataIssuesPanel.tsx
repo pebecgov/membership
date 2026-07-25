@@ -42,7 +42,7 @@ export function DataIssuesPanel() {
   }
 
   return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50 p-5 shadow-sm">
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm sm:p-5">
       <h2 className="text-sm font-semibold text-amber-900">Duplicate data issues</h2>
       <p className="mt-1 text-sm text-amber-800">
         These records share the same phone, NIN, or ID and can block new registrations. Delete
@@ -61,7 +61,7 @@ export function DataIssuesPanel() {
               {issue.members.map((member) => (
                 <li
                   key={member.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-slate-50 px-3 py-2 text-sm"
+                  className="flex flex-col gap-3 rounded-md bg-slate-50 px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div>
                     <p className="font-mono font-semibold text-[#0A1121]">{member.generatedId}</p>
@@ -76,7 +76,7 @@ export function DataIssuesPanel() {
                     type="button"
                     onClick={() => handleDelete(member.id, member.generatedId)}
                     disabled={deletingId === member.id}
-                    className="shrink-0 rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:opacity-50"
+                    className="w-full shrink-0 rounded-md border border-red-300 bg-white px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:opacity-50 sm:w-auto sm:py-1.5"
                   >
                     {deletingId === member.id ? "Deleting…" : "Delete"}
                   </button>

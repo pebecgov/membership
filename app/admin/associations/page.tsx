@@ -9,9 +9,9 @@ export default function AdminAssociationsPage() {
   const isViewer = roleResult?.authorized && roleResult.role === "viewer";
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-[#0A1121]">Associations</h1>
+        <h1 className="text-xl font-bold text-[#0A1121] sm:text-2xl">Associations</h1>
         <p className="mt-1 text-sm text-slate-500">
           {isViewer
             ? "View registered professional associations and member counts"
