@@ -2,7 +2,8 @@
 
 import { useQuery } from "convex/react";
 import Image from "next/image";
-import { useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import { api } from "@/convex/_generated/api";
 
 function formatDate(ts: number) {
@@ -13,8 +14,18 @@ function formatDate(ts: number) {
 }
 
 export function VerifyIdForm() {
-  const [memberId, setMemberId] = useState("");
-  const [submittedId, setSubmittedId] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+  const initialId = searchParams.get("id") ?? "";
+
+  const [memberId, setMemberId] = useState(initialId);
+  const [submittedId, setSubmittedId] = useState<string | null>(initialId.trim() || null);
+
+  useEffect(() => {
+    if (initialId) {
+      setMemberId(initialId);
+      setSubmittedId(initialId.trim());
+    }
+  }, [initialId]);
 
   const result = useQuery(
     api.members.verifyMember,

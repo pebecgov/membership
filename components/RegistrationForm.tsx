@@ -1,14 +1,22 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import Link from "next/link";
 import Image from "next/image";
+import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { NIGERIAN_STATES } from "@/lib/nigerianStates";
 import { buildMemberId } from "@/lib/memberId";
 
-type Step = "form" | "success";
+type Step = "form" | "success" | "existing";
+
+const DUPLICATE_MESSAGES: Record<string, string> = {
+  phone: "This phone number is already registered.",
+  nin: "This NIN is already registered.",
+  network_id: "A network member ID already exists for this association, state, and NIN.",
+  association_id: "This association member ID is already registered.",
+};
 
 function IdCardIcon() {
   return (
@@ -50,6 +58,14 @@ export function RegistrationForm() {
     associationName: string;
     associationLogoUrl: string;
   } | null>(null);
+  const [existing, setExisting] = useState<{
+    field: string;
+    generatedId: string;
+    memberIdNumber: string | null;
+    fullName: string;
+    associationName: string;
+    associationLogoUrl: string;
+  } | null>(null);
 
   const selectedAssociation = associations?.find((assoc) => assoc._id === associationId);
   const previewMemberId =
@@ -64,6 +80,7 @@ export function RegistrationForm() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setExisting(null);
 
     if (!associationId) {
       setError("Select your professional association.");
@@ -80,6 +97,20 @@ export function RegistrationForm() {
         memberIdNumber: memberIdNumber || undefined,
         associationId,
       });
+
+      if (result.status === "already_registered") {
+        setExisting({
+          field: result.field,
+          generatedId: result.generatedId,
+          memberIdNumber: result.memberIdNumber,
+          fullName: result.fullName,
+          associationName: result.associationName,
+          associationLogoUrl: result.associationLogoUrl,
+        });
+        setStep("existing");
+        return;
+      }
+
       setSuccess({
         generatedId: result.generatedId,
         memberIdNumber: result.memberIdNumber,
@@ -92,6 +123,53 @@ export function RegistrationForm() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (step === "existing" && existing) {
+    return (
+      <div className="rounded-lg border border-blue-200 bg-blue-50 px-8 py-10 text-center shadow-sm">
+        {existing.associationLogoUrl && (
+          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-white">
+            <Image
+              src={existing.associationLogoUrl}
+              alt={existing.associationName}
+              width={64}
+              height={64}
+              className="object-contain"
+              unoptimized
+            />
+          </div>
+        )}
+        <p className="text-sm font-semibold text-blue-800">You&apos;re already registered</p>
+        <p className="mt-2 text-sm text-blue-700">
+          {DUPLICATE_MESSAGES[existing.field] ?? "This registration already exists."}
+        </p>
+        <p className="mt-4 rounded-lg bg-white px-4 py-3 font-mono text-lg font-semibold text-[#0A1121]">
+          {existing.generatedId}
+        </p>
+        <p className="mt-4 text-sm text-slate-600">
+          {existing.associationName} · {existing.fullName}
+        </p>
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-center">
+          <Link
+            href={`/verify?id=${encodeURIComponent(existing.generatedId)}`}
+            className="rounded-md bg-[#0A1121] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#1a2235]"
+          >
+            Verify your ID
+          </Link>
+          <button
+            type="button"
+            onClick={() => {
+              setStep("form");
+              setExisting(null);
+            }}
+            className="rounded-md border border-slate-300 bg-white px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+          >
+            Back to form
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (step === "success" && success) {
@@ -121,9 +199,12 @@ export function RegistrationForm() {
             <span className="font-mono font-medium">{success.memberIdNumber}</span>
           </p>
         )}
-        <p className="mt-6 text-xs text-slate-400">
-          Save this ID. You can verify it anytime on the Verify ID page.
-        </p>
+        <Link
+          href={`/verify?id=${encodeURIComponent(success.generatedId)}`}
+          className="mt-6 inline-block text-sm font-medium text-[#0A1121] underline-offset-2 hover:underline"
+        >
+          Verify your ID now →
+        </Link>
       </div>
     );
   }

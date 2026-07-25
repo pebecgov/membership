@@ -1,6 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { getAssociationLogoUrl } from "./associationUtils";
 import {
@@ -10,7 +10,28 @@ import {
   normalizePhone,
 } from "./utils";
 
-async function assertNoDuplicateRegistration(
+type DuplicateField = "phone" | "nin" | "network_id" | "association_id";
+
+async function memberToPublicSummary(
+  ctx: MutationCtx,
+  member: Doc<"members">,
+  field: DuplicateField
+) {
+  const association = await ctx.db.get(member.associationId);
+  return {
+    status: "already_registered" as const,
+    field,
+    generatedId: member.generatedId,
+    memberIdNumber: member.memberIdNumber ?? null,
+    fullName: member.fullName,
+    associationName: association?.name ?? member.associationCode,
+    associationLogoUrl: association
+      ? ((await getAssociationLogoUrl(ctx, association)) ?? "")
+      : "",
+  };
+}
+
+async function checkNoDuplicateRegistration(
   ctx: MutationCtx,
   args: {
     state: string;
@@ -28,7 +49,7 @@ async function assertNoDuplicateRegistration(
     .withIndex("byPhone", (q) => q.eq("phone", args.phone))
     .first();
   if (existingByPhone) {
-    throw new Error("This phone number is already registered.");
+    return { ok: false as const, member: existingByPhone, field: "phone" as const };
   }
 
   const existingByNin = await ctx.db
@@ -36,7 +57,7 @@ async function assertNoDuplicateRegistration(
     .withIndex("byNin", (q) => q.eq("nin", args.nin))
     .first();
   if (existingByNin) {
-    throw new Error("This NIN is already registered.");
+    return { ok: false as const, member: existingByNin, field: "nin" as const };
   }
 
   const generatedId = buildMemberId({
@@ -50,26 +71,32 @@ async function assertNoDuplicateRegistration(
     .withIndex("byGeneratedId", (q) => q.eq("generatedId", generatedId))
     .first();
   if (existingByGeneratedId) {
-    throw new Error(
-      "A member with this membership ID already exists. If you believe this is an error, contact support."
+    return {
+      ok: false as const,
+      member: existingByGeneratedId,
+      field: "network_id" as const,
+    };
+  }
+
+  if (memberIdNumber) {
+    const membersInAssociation = await ctx.db
+      .query("members")
+      .withIndex("byAssociation", (q) => q.eq("associationId", args.associationId))
+      .collect();
+
+    const existingByAssociationMemberId = membersInAssociation.find(
+      (member) => member.memberIdNumber?.toUpperCase() === memberIdNumber
     );
+    if (existingByAssociationMemberId) {
+      return {
+        ok: false as const,
+        member: existingByAssociationMemberId,
+        field: "association_id" as const,
+      };
+    }
   }
 
-  const membersInAssociation = await ctx.db
-    .query("members")
-    .withIndex("byAssociation", (q) => q.eq("associationId", args.associationId))
-    .collect();
-
-  const existingByAssociationMemberId = memberIdNumber
-    ? membersInAssociation.find(
-        (member) => member.memberIdNumber?.toUpperCase() === memberIdNumber
-      )
-    : undefined;
-  if (existingByAssociationMemberId) {
-    throw new Error("This association member ID is already registered.");
-  }
-
-  return generatedId;
+  return { ok: true as const, generatedId };
 }
 
 export const register = mutation({
@@ -102,7 +129,7 @@ export const register = mutation({
       throw new Error("Invalid association selected.");
     }
 
-    const generatedId = await assertNoDuplicateRegistration(ctx, {
+    const duplicateCheck = await checkNoDuplicateRegistration(ctx, {
       state,
       phone,
       nin,
@@ -110,6 +137,10 @@ export const register = mutation({
       associationId: args.associationId,
       associationName: association.name,
     });
+
+    if (!duplicateCheck.ok) {
+      return memberToPublicSummary(ctx, duplicateCheck.member, duplicateCheck.field);
+    }
 
     const memberId = await ctx.db.insert("members", {
       fullName,
@@ -119,14 +150,15 @@ export const register = mutation({
       ...(memberIdNumber ? { memberIdNumber } : {}),
       associationId: args.associationId,
       associationCode: association.code,
-      generatedId,
+      generatedId: duplicateCheck.generatedId,
       phoneVerified: false,
       createdAt: Date.now(),
     });
 
     return {
+      status: "success" as const,
       memberId,
-      generatedId,
+      generatedId: duplicateCheck.generatedId,
       memberIdNumber: memberIdNumber || null,
       associationName: association.name,
       associationLogoUrl: (await getAssociationLogoUrl(ctx, association)) ?? "",

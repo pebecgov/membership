@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { NIGERIAN_STATES } from "@/lib/nigerianStates";
 import { AdminAccessMessage } from "@/components/admin/AdminAccessMessage";
+import { DataIssuesPanel } from "@/components/admin/DataIssuesPanel";
 
 function formatDate(ts: number) {
   return new Date(ts).toLocaleString("en-NG", {
@@ -15,6 +16,9 @@ function formatDate(ts: number) {
 }
 
 export function MembersTable() {
+  const roleResult = useQuery(api.admin.getPortalRole);
+  const isAdmin = roleResult?.authorized && roleResult.role === "admin";
+
   const associationsResult = useQuery(api.admin.listAssociations);
   const associations = associationsResult?.authorized ? associationsResult.associations : [];
   const [search, setSearch] = useState("");
@@ -22,6 +26,10 @@ export function MembersTable() {
   const [state, setState] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [deletingId, setDeletingId] = useState<Id<"members"> | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+
+  const deleteMember = useMutation(api.admin.deleteMember);
 
   const fromTs = fromDate ? new Date(fromDate).getTime() : undefined;
   const toTs = toDate ? new Date(`${toDate}T23:59:59`).getTime() : undefined;
@@ -73,11 +81,41 @@ export function MembersTable() {
     URL.revokeObjectURL(url);
   }
 
+  async function handleDelete(memberId: Id<"members">, generatedId: string, fullName: string) {
+    if (
+      !window.confirm(
+        `Delete ${fullName} (${generatedId})? This frees their phone/NIN for a new registration.`
+      )
+    ) {
+      return;
+    }
+
+    setDeletingId(memberId);
+    setDeleteError("");
+    try {
+      await deleteMember({ memberId });
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : "Failed to delete member.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <div className="space-y-5">
       {membersResult && !membersResult.authorized && (
         <AdminAccessMessage reason={membersResult.reason} />
       )}
+
+      {isAdmin && <DataIssuesPanel />}
+
+      {isAdmin && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          Someone stuck on &quot;already registered&quot;? Search their phone or NIN below and delete
+          the old test record so they can register again.
+        </div>
+      )}
+
       <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -136,6 +174,10 @@ export function MembersTable() {
         </div>
       </div>
 
+      {deleteError && (
+        <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{deleteError}</p>
+      )}
+
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
@@ -149,18 +191,19 @@ export function MembersTable() {
                 <th className="px-4 py-3 font-semibold">Phone</th>
                 <th className="px-4 py-3 font-semibold">NIN</th>
                 <th className="px-4 py-3 font-semibold">Registered</th>
+                {isAdmin && <th className="px-4 py-3 font-semibold">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {membersResult === undefined ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
+                  <td colSpan={isAdmin ? 9 : 8} className="px-4 py-8 text-center text-slate-400">
                     Loading members…
                   </td>
                 </tr>
               ) : members.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
+                  <td colSpan={isAdmin ? 9 : 8} className="px-4 py-8 text-center text-slate-400">
                     No members match your filters.
                   </td>
                 </tr>
@@ -179,6 +222,20 @@ export function MembersTable() {
                     <td className="px-4 py-3 text-slate-600">{member.phone}</td>
                     <td className="px-4 py-3 font-mono text-xs text-slate-500">{member.nin}</td>
                     <td className="px-4 py-3 text-slate-500">{formatDate(member.createdAt)}</td>
+                    {isAdmin && (
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleDelete(member.id, member.generatedId, member.fullName)
+                          }
+                          disabled={deletingId === member.id}
+                          className="rounded-md border border-red-300 px-2.5 py-1 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:opacity-50"
+                        >
+                          {deletingId === member.id ? "Deleting…" : "Delete"}
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))
               )}

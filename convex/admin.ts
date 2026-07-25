@@ -2,6 +2,7 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { getAssociationLogoUrl } from "./associationUtils";
 import { getPortalAccess, requireAdmin } from "./adminAuth";
+import type { Id } from "./_generated/dataModel";
 
 function maskNin(nin: string) {
   if (nin.length <= 4) return "****";
@@ -260,5 +261,97 @@ export const createAssociation = mutation({
       isActive: true,
       createdAt: Date.now(),
     });
+  },
+});
+
+export const deleteMember = mutation({
+  args: { memberId: v.id("members") },
+  handler: async (ctx, { memberId }) => {
+    await requireAdmin(ctx);
+    const member = await ctx.db.get(memberId);
+    if (!member) {
+      throw new Error("Member not found.");
+    }
+    await ctx.db.delete(memberId);
+    return { deleted: true, generatedId: member.generatedId };
+  },
+});
+
+export const listDataIssues = query({
+  args: {},
+  handler: async (ctx) => {
+    const access = await getPortalAccess(ctx);
+    if (!access.authorized || access.role !== "admin") {
+      return { authorized: false as const, reason: access.authorized ? "forbidden" as const : access.reason, issues: [] as const };
+    }
+
+    const members = await ctx.db.query("members").collect();
+    const associations = await ctx.db.query("associations").collect();
+    const associationMap = new Map(associations.map((a) => [a._id, a.name]));
+
+    type IssueMember = {
+      id: Id<"members">;
+      generatedId: string;
+      fullName: string;
+      phone: string;
+      nin: string;
+      associationName: string;
+      createdAt: number;
+    };
+
+    function toIssueMember(member: (typeof members)[number]): IssueMember {
+      return {
+        id: member._id,
+        generatedId: member.generatedId,
+        fullName: member.fullName,
+        phone: maskPhone(member.phone),
+        nin: maskNin(member.nin),
+        associationName: associationMap.get(member.associationId) ?? member.associationCode,
+        createdAt: member.createdAt,
+      };
+    }
+
+    function findDuplicateGroups(
+      keyFn: (member: (typeof members)[number]) => string | null | undefined
+    ) {
+      const groups = new Map<string, typeof members>();
+      for (const member of members) {
+        const key = keyFn(member);
+        if (!key) continue;
+        const list = groups.get(key) ?? [];
+        list.push(member);
+        groups.set(key, list);
+      }
+      return [...groups.entries()]
+        .filter(([, list]) => list.length > 1)
+        .map(([key, list]) => ({ key, members: list.map(toIssueMember) }));
+    }
+
+    const issues = [
+      ...findDuplicateGroups((m) => m.phone).map((g) => ({
+        type: "duplicate_phone" as const,
+        label: `Duplicate phone: ${maskPhone(g.key)}`,
+        members: g.members,
+      })),
+      ...findDuplicateGroups((m) => m.nin).map((g) => ({
+        type: "duplicate_nin" as const,
+        label: `Duplicate NIN: ${maskNin(g.key)}`,
+        members: g.members,
+      })),
+      ...findDuplicateGroups((m) => m.generatedId).map((g) => ({
+        type: "duplicate_network_id" as const,
+        label: `Duplicate network ID: ${g.key}`,
+        members: g.members,
+      })),
+      ...findDuplicateGroups((m) =>
+        m.memberIdNumber ? `${m.associationId}:${m.memberIdNumber.toUpperCase()}` : null
+      ).map((g) => ({
+        type: "duplicate_association_id" as const,
+        label: `Duplicate association member ID in same association`,
+        members: g.members,
+      })),
+    ];
+
+    return { authorized: true as const, issues };
   },
 });
