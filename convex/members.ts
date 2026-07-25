@@ -13,7 +13,6 @@ import {
 async function assertNoDuplicateRegistration(
   ctx: MutationCtx,
   args: {
-    fullName: string;
     state: string;
     phone: string;
     nin: string;
@@ -22,8 +21,6 @@ async function assertNoDuplicateRegistration(
     associationName: string;
   }
 ) {
-  const fullName = args.fullName.trim();
-  const normalizedName = fullName.toLowerCase();
   const memberIdNumber = args.memberIdNumber.trim().toUpperCase();
 
   const existingByPhone = await ctx.db
@@ -70,19 +67,6 @@ async function assertNoDuplicateRegistration(
     throw new Error("This association member ID is already registered.");
   }
 
-  const exactDuplicate = membersInAssociation.find(
-    (member) =>
-      member.fullName.trim().toLowerCase() === normalizedName &&
-      member.state === args.state &&
-      member.phone === args.phone &&
-      member.nin === args.nin &&
-      member.memberIdNumber?.toUpperCase() === memberIdNumber
-  );
-
-  if (exactDuplicate) {
-    throw new Error("A registration with these exact details already exists.");
-  }
-
   return generatedId;
 }
 
@@ -118,7 +102,6 @@ export const register = mutation({
     }
 
     const generatedId = await assertNoDuplicateRegistration(ctx, {
-      fullName,
       state,
       phone,
       nin,
