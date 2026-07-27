@@ -17,6 +17,8 @@ import type * as http from "../http.js";
 import type * as members from "../members.js";
 import type * as users from "../users.js";
 import type * as utils from "../utils.js";
+import type * as viewerAccess from "../viewerAccess.js";
+import type * as viewers from "../viewers.js";
 
 import type {
   ApiFromModules,
@@ -34,6 +36,8 @@ declare const fullApi: ApiFromModules<{
   members: typeof members;
   users: typeof users;
   utils: typeof utils;
+  viewerAccess: typeof viewerAccess;
+  viewers: typeof viewers;
 }>;
 
 /**

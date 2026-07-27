@@ -48,4 +48,10 @@ export default defineSchema({
     email: v.optional(v.string()),
     externalId: v.string(),
   }).index("byExternalId", ["externalId"]),
+
+  viewer_access: defineTable({
+    email: v.string(),
+    associationIds: v.array(v.id("associations")),
+    updatedAt: v.number(),
+  }).index("byEmail", ["email"]),
 });

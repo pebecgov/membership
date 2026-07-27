@@ -1,15 +1,9 @@
 import type { QueryCtx, MutationCtx, ActionCtx } from "./_generated/server";
+import { parseEmailList } from "./viewerAccess";
 
 type AuthCtx = QueryCtx | MutationCtx | ActionCtx;
 
 export type PortalRole = "admin" | "viewer";
-
-function parseEmailList(value: string | undefined) {
-  return (value ?? "")
-    .split(",")
-    .map((email) => email.trim().toLowerCase())
-    .filter(Boolean);
-}
 
 export async function getPortalAccess(ctx: AuthCtx) {
   const identity = await ctx.auth.getUserIdentity();

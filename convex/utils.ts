@@ -1,12 +1,6 @@
 /** Nigerian state → 3-letter code for member IDs */
-import { STATE_CODES } from "../lib/nigerianStates";
-
 export { NIGERIAN_STATES } from "../lib/nigerianStates";
-export { buildMemberId, firstThreeLetters } from "../lib/memberId";
-
-export function getStateCode(state: string): string {
-  return STATE_CODES[state] ?? state.slice(0, 3).toUpperCase();
-}
+export { buildMemberId, firstThreeLetters, getStateCode } from "../lib/memberId";
 
 export function normalizePhone(phone: string): string {
   const digits = phone.replace(/\D/g, "");

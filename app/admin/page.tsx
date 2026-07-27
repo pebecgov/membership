@@ -18,6 +18,12 @@ function formatDate(ts: number) {
 export default function AdminDashboardPage() {
   const { isAuthenticated } = useConvexAuth();
   const dashboard = useQuery(api.admin.getDashboard, isAuthenticated ? {} : "skip");
+  const roleResult = useQuery(api.admin.getPortalRole, isAuthenticated ? {} : "skip");
+  const viewerHasNoAccess =
+    roleResult?.authorized &&
+    roleResult.role === "viewer" &&
+    "associationIds" in roleResult &&
+    roleResult.associationIds.length === 0;
 
   if (dashboard === undefined) {
     return <p className="text-sm text-slate-500">Loading dashboard…</p>;
@@ -32,9 +38,18 @@ export default function AdminDashboardPage() {
       <div>
         <h1 className="text-xl font-bold text-[#0A1121] sm:text-2xl">Dashboard</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Overview of member registrations and association activity
+          {roleResult?.authorized && roleResult.role === "viewer"
+            ? "Overview for your assigned associations"
+            : "Overview of member registrations and association activity"}
         </p>
       </div>
+
+      {viewerHasNoAccess && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Your viewer account does not have any associations assigned yet. Ask an admin to grant
+          access from the Viewer access page.
+        </div>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
         <StatCard label="Total members" value={dashboard.totals.all} />

@@ -1,12 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { NIGERIAN_STATES } from "@/lib/nigerianStates";
 import { AdminAccessMessage } from "@/components/admin/AdminAccessMessage";
 import { DataIssuesPanel } from "@/components/admin/DataIssuesPanel";
+
+const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 
 function formatDate(ts: number) {
   return new Date(ts).toLocaleString("en-NG", {
@@ -15,17 +17,63 @@ function formatDate(ts: number) {
   });
 }
 
+function buildCsv(
+  members: Array<{
+    generatedId: string;
+    memberIdNumber: string;
+    fullName: string;
+    state: string;
+    associationName: string;
+    phone: string;
+    nin: string;
+    createdAt: number;
+  }>
+) {
+  if (!members.length) return "";
+  const headers = [
+    "Network Member ID",
+    "Association Member ID",
+    "Full Name",
+    "State",
+    "Association",
+    "Phone",
+    "NIN",
+    "Registered",
+  ];
+  const rows = members.map((m) => [
+    m.generatedId,
+    m.memberIdNumber,
+    m.fullName,
+    m.state,
+    m.associationName,
+    m.phone,
+    m.nin,
+    formatDate(m.createdAt),
+  ]);
+  return [headers, ...rows]
+    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+}
+
 export function MembersTable() {
   const roleResult = useQuery(api.admin.getPortalRole);
   const isAdmin = roleResult?.authorized && roleResult.role === "admin";
 
-  const associationsResult = useQuery(api.admin.listAssociations);
+  const associationsResult = useQuery(api.admin.listMemberFilterAssociations);
   const associations = associationsResult?.authorized ? associationsResult.associations : [];
+  const viewerHasNoAccess =
+    roleResult?.authorized &&
+    roleResult.role === "viewer" &&
+    "associationIds" in roleResult &&
+    roleResult.associationIds.length === 0;
   const [search, setSearch] = useState("");
   const [associationId, setAssociationId] = useState<Id<"associations"> | "">("");
   const [state, setState] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(25);
+  const [exporting, setExporting] = useState(false);
   const [deletingId, setDeletingId] = useState<Id<"members"> | null>(null);
   const [deleteError, setDeleteError] = useState("");
 
@@ -34,52 +82,55 @@ export function MembersTable() {
   const fromTs = fromDate ? new Date(fromDate).getTime() : undefined;
   const toTs = toDate ? new Date(`${toDate}T23:59:59`).getTime() : undefined;
 
-  const membersResult = useQuery(api.admin.listMembers, {
+  const filters = {
     search: search || undefined,
     associationId: associationId || undefined,
     state: state || undefined,
     fromDate: fromTs,
     toDate: toTs,
+  };
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, associationId, state, fromDate, toDate, pageSize]);
+
+  const membersResult = useQuery(api.admin.listMembers, {
+    ...filters,
+    page,
+    pageSize,
   });
+  const exportResult = useQuery(
+    api.admin.exportMembers,
+    exporting ? filters : "skip"
+  );
+
   const members = membersResult?.authorized ? membersResult.members : [];
+  const total = membersResult?.authorized ? membersResult.total : 0;
+  const totalPages = membersResult?.authorized ? membersResult.totalPages : 0;
+  const currentPage = membersResult?.authorized ? membersResult.page : 1;
 
-  const exportCsv = useMemo(() => {
-    if (!members?.length) return "";
-    const headers = [
-      "Network Member ID",
-      "Association Member ID",
-      "Full Name",
-      "State",
-      "Association",
-      "Phone",
-      "NIN",
-      "Registered",
-    ];
-    const rows = members.map((m) => [
-      m.generatedId,
-      m.memberIdNumber,
-      m.fullName,
-      m.state,
-      m.associationName,
-      m.phone,
-      m.nin,
-      formatDate(m.createdAt),
-    ]);
-    return [headers, ...rows]
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-  }, [members]);
+  useEffect(() => {
+    if (!exporting || exportResult === undefined) return;
+    if (!exportResult.authorized) {
+      setExporting(false);
+      return;
+    }
 
-  function handleExport() {
-    if (!exportCsv) return;
-    const blob = new Blob([exportCsv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `members-${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-  }
+    const csv = buildCsv(exportResult.members);
+    if (csv) {
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `members-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    }
+    setExporting(false);
+  }, [exporting, exportResult]);
+
+  const rangeStart = total === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const rangeEnd = total === 0 ? 0 : Math.min(currentPage * pageSize, total);
 
   async function handleDelete(memberId: Id<"members">, generatedId: string, fullName: string) {
     if (
@@ -107,6 +158,13 @@ export function MembersTable() {
         <AdminAccessMessage reason={membersResult.reason} />
       )}
 
+      {viewerHasNoAccess && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Your viewer account does not have any associations assigned yet. Ask an admin to grant
+          access from the Viewer access page.
+        </div>
+      )}
+
       {isAdmin && <DataIssuesPanel />}
 
       {isAdmin && (
@@ -124,11 +182,11 @@ export function MembersTable() {
           </div>
           <button
             type="button"
-            onClick={handleExport}
-            disabled={!members?.length}
+            onClick={() => setExporting(true)}
+            disabled={exporting || total === 0}
             className="w-full rounded-md border border-[#0A1121] px-4 py-2 text-sm font-medium text-[#0A1121] transition hover:bg-slate-50 disabled:opacity-40 sm:w-auto"
           >
-            Export CSV
+            {exporting ? "Exporting…" : "Export CSV"}
           </button>
         </div>
 
@@ -187,7 +245,7 @@ export function MembersTable() {
           </p>
         ) : (
           <>
-            <div className="divide-y divide-slate-100 md:hidden">
+            <div className="max-h-[min(70vh,32rem)] divide-y divide-slate-100 overflow-y-auto md:hidden">
               {members.map((member) => (
                 <div key={member.id} className="space-y-2 px-4 py-4">
                   <div className="flex items-start justify-between gap-2">
@@ -218,9 +276,9 @@ export function MembersTable() {
               ))}
             </div>
 
-            <div className="hidden overflow-x-auto md:block">
+            <div className="hidden max-h-[min(70vh,32rem)] overflow-auto md:block">
               <table className="min-w-full text-left text-sm">
-                <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-4 py-3 font-semibold">Network ID</th>
                     <th className="px-4 py-3 font-semibold">Association ID</th>
@@ -269,9 +327,53 @@ export function MembersTable() {
             </div>
           </>
         )}
+
         {membersResult && membersResult.authorized && (
-          <div className="border-t border-slate-200 px-4 py-3 text-xs text-slate-500">
-            Showing {members.length} member{members.length === 1 ? "" : "s"}
+          <div className="flex flex-col gap-3 border-t border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-slate-500">
+              Showing {rangeStart}–{rangeEnd} of {total} member{total === 1 ? "" : "s"}
+            </p>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2 text-xs text-slate-500">
+                Rows
+                <select
+                  value={pageSize}
+                  onChange={(e) =>
+                    setPageSize(Number(e.target.value) as (typeof PAGE_SIZE_OPTIONS)[number])
+                  }
+                  className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-[#0A1121]"
+                >
+                  {PAGE_SIZE_OPTIONS.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage <= 1}
+                  className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
+                >
+                  Prev
+                </button>
+                <span className="px-2 text-xs text-slate-500">
+                  Page {currentPage} of {totalPages || 1}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.min(totalPages || 1, p + 1))}
+                  disabled={currentPage >= totalPages}
+                  className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

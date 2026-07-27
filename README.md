@@ -11,7 +11,7 @@ Standalone landing page + registration form for generating association member ID
 - Public registration form with automatic network member ID generation
 - Verify ID page at `/verify` — look up registration by network or association member ID
 - Admin dashboard at `/admin` (Clerk sign-in) with full CRUD for admins
-- Viewer role — read-only access to overview, members, and associations
+- Viewer role — read-only access to overview and members for assigned associations only
 - Analytics: totals, daily chart, breakdown by association and state
 - Member registry with search, filters, and CSV export
 - Generated ID format: `{ASSOC3}-{STATE3}-{NIN7}`  
@@ -77,7 +77,7 @@ Open [http://localhost:3002](http://localhost:3002)
 | Role | Env var | Access |
 |------|---------|--------|
 | **Admin** | `ADMIN_EMAILS` | Overview, members, associations — full CRUD |
-| **Viewer** | `VIEWER_EMAILS` | Overview, members, associations — read-only (no add/edit) |
+| **Viewer** | `VIEWER_EMAILS` | Overview and members for assigned associations only (read-only) |
 
 ---
 

@@ -7,10 +7,16 @@ import { useQuery } from "convex/react";
 import { useEffect, useState } from "react";
 import { api } from "@/convex/_generated/api";
 
-const links = [
-  { href: "/admin", label: "Overview", exact: true },
-  { href: "/admin/members", label: "Members" },
-  { href: "/admin/associations", label: "Associations" },
+const allLinks: Array<{
+  href: string;
+  label: string;
+  exact?: boolean;
+  roles: Array<"admin" | "viewer">;
+}> = [
+  { href: "/admin", label: "Overview", exact: true, roles: ["admin", "viewer"] },
+  { href: "/admin/members", label: "Members", roles: ["admin", "viewer"] },
+  { href: "/admin/associations", label: "Associations", roles: ["admin"] },
+  { href: "/admin/viewers", label: "Viewer access", roles: ["admin"] },
 ];
 
 function MenuIcon() {
@@ -39,7 +45,9 @@ function SidebarContent({
   onNavigate?: () => void;
 }) {
   const title = role === "viewer" ? "Viewer Portal" : "Admin Portal";
-  const subtitle = role === "viewer" ? "Read-only access" : "Member registrations";
+  const subtitle =
+    role === "viewer" ? "Assigned association members" : "Member registrations";
+  const links = allLinks.filter((link) => role && link.roles.includes(role));
 
   return (
     <>

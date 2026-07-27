@@ -1,10 +1,16 @@
+import { STATE_CODES } from "./nigerianStates";
+
 export function firstThreeLetters(value: string): string {
   const letters = value.replace(/[^a-zA-Z]/g, "");
   if (!letters) return "XXX";
   return letters.slice(0, 3).toUpperCase().padEnd(3, "X");
 }
 
-/** e.g. NAC-LAG-1234567 — association (3) + state (3) + last 7 NIN digits */
+export function getStateCode(state: string): string {
+  return STATE_CODES[state] ?? firstThreeLetters(state);
+}
+
+/** e.g. NAC-LAG-1234567 — association (3) + state code (3) + last 7 NIN digits */
 export function buildMemberId(params: {
   associationName: string;
   state: string;
@@ -16,7 +22,7 @@ export function buildMemberId(params: {
   }
 
   const assocPart = firstThreeLetters(params.associationName);
-  const statePart = firstThreeLetters(params.state);
+  const statePart = getStateCode(params.state);
   const ninPart = nin.slice(-7);
 
   return `${assocPart}-${statePart}-${ninPart}`;

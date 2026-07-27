@@ -1,7 +1,9 @@
 import { mutation, query } from "./_generated/server";
+import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { getAssociationLogoUrl } from "./associationUtils";
 import { getPortalAccess, requireAdmin } from "./adminAuth";
+import { getViewerAssociationIds } from "./viewerAccess";
 import type { Id } from "./_generated/dataModel";
 
 function maskNin(nin: string) {
@@ -12,6 +14,111 @@ function maskNin(nin: string) {
 function maskPhone(phone: string) {
   if (phone.length <= 4) return "****";
   return `${phone.slice(0, 4)} *** ${phone.slice(-4)}`;
+}
+
+type MemberFilters = {
+  search?: string;
+  associationId?: Id<"associations">;
+  state?: string;
+  fromDate?: number;
+  toDate?: number;
+};
+
+type MemberRow = {
+  id: Id<"members">;
+  generatedId: string;
+  memberIdNumber: string;
+  fullName: string;
+  state: string;
+  phone: string;
+  nin: string;
+  associationId: Id<"associations">;
+  associationName: string;
+  associationCode: string;
+  phoneVerified: boolean;
+  createdAt: number;
+};
+
+async function getAllowedAssociationIds(
+  ctx: QueryCtx,
+  access: { role: "admin" | "viewer"; identity: { email?: string | null } }
+): Promise<Id<"associations">[] | null> {
+  if (access.role === "admin") return null;
+  const email = access.identity.email?.toLowerCase();
+  if (!email) return [];
+  return await getViewerAssociationIds(ctx, email);
+}
+
+async function getFilteredMembers(
+  ctx: QueryCtx,
+  args: MemberFilters,
+  allowedAssociationIds: Id<"associations">[] | null = null
+): Promise<MemberRow[]> {
+  const associations = await ctx.db.query("associations").collect();
+  const associationMap = new Map(
+    associations.map((a) => [a._id, { name: a.name, code: a.code }])
+  );
+
+  let members = await ctx.db.query("members").collect();
+  const search = args.search?.trim().toLowerCase();
+
+  members = members.filter((member) => {
+    if (allowedAssociationIds && !allowedAssociationIds.includes(member.associationId)) {
+      return false;
+    }
+    if (args.associationId) {
+      if (allowedAssociationIds && !allowedAssociationIds.includes(args.associationId)) {
+        return false;
+      }
+      if (member.associationId !== args.associationId) {
+        return false;
+      }
+    }
+    if (args.state && member.state !== args.state) {
+      return false;
+    }
+    if (args.fromDate && member.createdAt < args.fromDate) {
+      return false;
+    }
+    if (args.toDate && member.createdAt > args.toDate) {
+      return false;
+    }
+    if (search) {
+      const haystack = [
+        member.fullName,
+        member.generatedId,
+        member.memberIdNumber,
+        member.phone,
+        member.state,
+        member.associationCode,
+        associationMap.get(member.associationId)?.name ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+    return true;
+  });
+
+  return members
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .map((member) => {
+      const assoc = associationMap.get(member.associationId);
+      return {
+        id: member._id,
+        generatedId: member.generatedId,
+        memberIdNumber: member.memberIdNumber ?? "",
+        fullName: member.fullName,
+        state: member.state,
+        phone: maskPhone(member.phone),
+        nin: maskNin(member.nin),
+        associationId: member.associationId,
+        associationName: assoc?.name ?? member.associationCode,
+        associationCode: assoc?.code ?? member.associationCode,
+        phoneVerified: member.phoneVerified,
+        createdAt: member.createdAt,
+      };
+    });
 }
 
 function startOfDay(ts: number) {
@@ -27,6 +134,13 @@ export const getPortalRole = query({
     if (!access.authorized) {
       return { authorized: false as const, reason: access.reason };
     }
+    if (access.role === "viewer") {
+      const associationIds = await getViewerAssociationIds(
+        ctx,
+        access.identity.email?.toLowerCase() ?? ""
+      );
+      return { authorized: true as const, role: access.role, associationIds };
+    }
     return { authorized: true as const, role: access.role };
   },
 });
@@ -39,9 +153,21 @@ export const getDashboard = query({
       return { authorized: false as const, reason: access.reason };
     }
 
-    const members = await ctx.db.query("members").collect();
+    const allowedAssociationIds = await getAllowedAssociationIds(ctx, access);
+
+    let members = await ctx.db.query("members").collect();
     const associations = await ctx.db.query("associations").collect();
-    const associationMap = new Map(associations.map((a) => [a._id, a.name]));
+    const allowedSet =
+      allowedAssociationIds === null ? null : new Set(allowedAssociationIds);
+    if (allowedSet) {
+      members = members.filter((member) => allowedSet.has(member.associationId));
+    }
+    const visibleAssociations =
+      allowedSet === null
+        ? associations
+        : associations.filter((assoc) => allowedSet.has(assoc._id));
+
+    const associationMap = new Map(visibleAssociations.map((a) => [a._id, a.name]));
 
     const now = Date.now();
     const todayStart = startOfDay(now);
@@ -99,7 +225,7 @@ export const getDashboard = query({
         today,
         thisWeek,
         thisMonth,
-        associations: associations.filter((a) => a.isActive).length,
+        associations: visibleAssociations.filter((a) => a.isActive).length,
       },
       byAssociation: Object.entries(byAssociation)
         .map(([name, count]) => ({ name, count }))
@@ -120,6 +246,50 @@ export const listMembers = query({
     state: v.optional(v.string()),
     fromDate: v.optional(v.number()),
     toDate: v.optional(v.number()),
+    page: v.optional(v.number()),
+    pageSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const access = await getPortalAccess(ctx);
+    if (!access.authorized) {
+      return {
+        authorized: false as const,
+        reason: access.reason,
+        members: [] as const,
+        total: 0,
+        page: 1,
+        pageSize: 25,
+        totalPages: 0,
+      };
+    }
+
+    const allowedAssociationIds = await getAllowedAssociationIds(ctx, access);
+    const { page: pageArg, pageSize: pageSizeArg, ...filters } = args;
+    const all = await getFilteredMembers(ctx, filters, allowedAssociationIds);
+    const pageSize = Math.min(100, Math.max(10, pageSizeArg ?? 25));
+    const totalPages = Math.max(1, Math.ceil(all.length / pageSize));
+    const page = Math.min(Math.max(1, pageArg ?? 1), totalPages);
+    const start = (page - 1) * pageSize;
+
+    return {
+      authorized: true as const,
+      role: access.role,
+      members: all.slice(start, start + pageSize),
+      total: all.length,
+      page,
+      pageSize,
+      totalPages: all.length === 0 ? 0 : totalPages,
+    };
+  },
+});
+
+export const exportMembers = query({
+  args: {
+    search: v.optional(v.string()),
+    associationId: v.optional(v.id("associations")),
+    state: v.optional(v.string()),
+    fromDate: v.optional(v.number()),
+    toDate: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const access = await getPortalAccess(ctx);
@@ -127,66 +297,34 @@ export const listMembers = query({
       return { authorized: false as const, reason: access.reason, members: [] as const };
     }
 
-    const associations = await ctx.db.query("associations").collect();
-    const associationMap = new Map(
-      associations.map((a) => [a._id, { name: a.name, code: a.code }])
-    );
-
-    let members = await ctx.db.query("members").collect();
-    const search = args.search?.trim().toLowerCase();
-
-    members = members.filter((member) => {
-      if (args.associationId && member.associationId !== args.associationId) {
-        return false;
-      }
-      if (args.state && member.state !== args.state) {
-        return false;
-      }
-      if (args.fromDate && member.createdAt < args.fromDate) {
-        return false;
-      }
-      if (args.toDate && member.createdAt > args.toDate) {
-        return false;
-      }
-      if (search) {
-        const haystack = [
-          member.fullName,
-          member.generatedId,
-          member.memberIdNumber,
-          member.phone,
-          member.state,
-          member.associationCode,
-          associationMap.get(member.associationId)?.name ?? "",
-        ]
-          .join(" ")
-          .toLowerCase();
-        if (!haystack.includes(search)) return false;
-      }
-      return true;
-    });
+    const allowedAssociationIds = await getAllowedAssociationIds(ctx, access);
 
     return {
       authorized: true as const,
-      role: access.role,
-      members: members
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .map((member) => {
-          const assoc = associationMap.get(member.associationId);
-          return {
-            id: member._id,
-            generatedId: member.generatedId,
-            memberIdNumber: member.memberIdNumber ?? "",
-            fullName: member.fullName,
-            state: member.state,
-            phone: maskPhone(member.phone),
-            nin: maskNin(member.nin),
-            associationId: member.associationId,
-            associationName: assoc?.name ?? member.associationCode,
-            associationCode: assoc?.code ?? member.associationCode,
-            phoneVerified: member.phoneVerified,
-            createdAt: member.createdAt,
-          };
-        }),
+      members: await getFilteredMembers(ctx, args, allowedAssociationIds),
+    };
+  },
+});
+
+export const listMemberFilterAssociations = query({
+  args: {},
+  handler: async (ctx) => {
+    const access = await getPortalAccess(ctx);
+    if (!access.authorized) {
+      return { authorized: false as const, reason: access.reason, associations: [] as const };
+    }
+
+    const allowedAssociationIds = await getAllowedAssociationIds(ctx, access);
+    const rows = await ctx.db.query("associations").collect();
+    const allowedSet =
+      allowedAssociationIds === null ? null : new Set(allowedAssociationIds);
+
+    return {
+      authorized: true as const,
+      associations: rows
+        .filter((assoc) => allowedSet === null || allowedSet.has(assoc._id))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((assoc) => ({ id: assoc._id, name: assoc.name, code: assoc.code })),
     };
   },
 });
@@ -197,6 +335,9 @@ export const listAssociations = query({
     const access = await getPortalAccess(ctx);
     if (!access.authorized) {
       return { authorized: false as const, reason: access.reason, associations: [] as const };
+    }
+    if (access.role !== "admin") {
+      return { authorized: false as const, reason: "forbidden" as const, associations: [] as const };
     }
 
     const rows = await ctx.db.query("associations").collect();
