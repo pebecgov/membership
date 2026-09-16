@@ -20,7 +20,7 @@ export function BarChart({
         <p className="mt-6 text-sm text-slate-400">{emptyMessage}</p>
       ) : (
         <div className="mt-5 space-y-3">
-          {items.slice(0, 8).map((item) => (
+          {items.slice(0, 10).map((item) => (
             <div key={item.name}>
               <div className="mb-1 flex items-center justify-between text-xs">
                 <span className="truncate font-medium text-slate-700">{item.name}</span>
