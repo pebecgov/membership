@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { getAssociationLogoUrl } from "./associationUtils";
+import { adjustMemberStats, buildSearchText } from "./memberStats";
 import {
   buildMemberId,
   isValidNin,
@@ -142,6 +143,7 @@ export const register = mutation({
       return memberToPublicSummary(ctx, duplicateCheck.member, duplicateCheck.field);
     }
 
+    const createdAt = Date.now();
     const memberId = await ctx.db.insert("members", {
       fullName,
       state,
@@ -152,8 +154,19 @@ export const register = mutation({
       associationCode: association.code,
       generatedId: duplicateCheck.generatedId,
       phoneVerified: false,
-      createdAt: Date.now(),
+      createdAt,
+      searchText: buildSearchText({
+        fullName,
+        generatedId: duplicateCheck.generatedId,
+        memberIdNumber: memberIdNumber || undefined,
+        phone,
+        nin,
+        state,
+        associationCode: association.code,
+      }),
     });
+
+    await adjustMemberStats(ctx, { associationId: args.associationId, state, createdAt }, 1);
 
     return {
       status: "success" as const,

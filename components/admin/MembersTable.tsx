@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useConvex, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { NIGERIAN_STATES } from "@/lib/nigerianStates";
@@ -71,13 +71,14 @@ export function MembersTable() {
   const [state, setState] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [page, setPage] = useState(1);
+  const [cursorHistory, setCursorHistory] = useState<(string | undefined)[]>([undefined]);
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(25);
   const [exporting, setExporting] = useState(false);
   const [deletingId, setDeletingId] = useState<Id<"members"> | null>(null);
   const [deleteError, setDeleteError] = useState("");
 
   const deleteMember = useMutation(api.admin.deleteMember);
+  const convex = useConvex();
 
   const fromTs = fromDate ? new Date(fromDate).getTime() : undefined;
   const toTs = toDate ? new Date(`${toDate}T23:59:59`).getTime() : undefined;
@@ -91,33 +92,38 @@ export function MembersTable() {
   };
 
   useEffect(() => {
-    setPage(1);
+    setCursorHistory([undefined]);
   }, [search, associationId, state, fromDate, toDate, pageSize]);
 
   const membersResult = useQuery(api.admin.listMembers, {
     ...filters,
-    page,
+    cursor: cursorHistory[cursorHistory.length - 1],
     pageSize,
   });
-  const exportResult = useQuery(
-    api.admin.exportMembers,
-    exporting ? filters : "skip"
-  );
 
   const members = membersResult?.authorized ? membersResult.members : [];
-  const total = membersResult?.authorized ? membersResult.total : 0;
-  const totalPages = membersResult?.authorized ? membersResult.totalPages : 0;
-  const currentPage = membersResult?.authorized ? membersResult.page : 1;
+  const total = membersResult?.authorized ? membersResult.total : null;
 
-  useEffect(() => {
-    if (!exporting || exportResult === undefined) return;
-    if (!exportResult.authorized) {
-      setExporting(false);
-      return;
-    }
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const rows: typeof members = [];
+      let cursor: string | undefined;
+      let guard = 0;
+      do {
+        const page = await convex.query(api.admin.listMembers, {
+          ...filters,
+          cursor,
+          pageSize: 200,
+        });
+        if (!page.authorized) break;
+        rows.push(...page.members);
+        cursor = page.isDone ? undefined : page.continueCursor;
+        guard += 1;
+      } while (cursor && guard < 400);
 
-    const csv = buildCsv(exportResult.members);
-    if (csv) {
+      const csv = buildCsv(rows);
+      if (!csv) return;
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -125,12 +131,10 @@ export function MembersTable() {
       link.download = `members-${new Date().toISOString().slice(0, 10)}.csv`;
       link.click();
       URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
     }
-    setExporting(false);
-  }, [exporting, exportResult]);
-
-  const rangeStart = total === 0 ? 0 : (currentPage - 1) * pageSize + 1;
-  const rangeEnd = total === 0 ? 0 : Math.min(currentPage * pageSize, total);
+  }
 
   async function handleDelete(memberId: Id<"members">, generatedId: string, fullName: string) {
     if (
@@ -182,8 +186,8 @@ export function MembersTable() {
           </div>
           <button
             type="button"
-            onClick={() => setExporting(true)}
-            disabled={exporting || total === 0}
+            onClick={() => void handleExport()}
+            disabled={exporting || (membersResult?.authorized && membersResult.isDone && members.length === 0 && cursorHistory.length === 1)}
             className="w-full rounded-md border border-[#0A1121] px-4 py-2 text-sm font-medium text-[#0A1121] transition hover:bg-slate-50 disabled:opacity-40 sm:w-auto"
           >
             {exporting ? "Exporting…" : "Export CSV"}
@@ -331,7 +335,8 @@ export function MembersTable() {
         {membersResult && membersResult.authorized && (
           <div className="flex flex-col gap-3 border-t border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-slate-500">
-              Showing {rangeStart}–{rangeEnd} of {total} member{total === 1 ? "" : "s"}
+              Showing {members.length} member{members.length === 1 ? "" : "s"}
+              {total !== null ? ` · ${total.toLocaleString()} total` : ""}
             </p>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -355,19 +360,24 @@ export function MembersTable() {
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={currentPage <= 1}
+                  onClick={() => setCursorHistory((history) => history.slice(0, -1))}
+                  disabled={cursorHistory.length <= 1}
                   className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
                 >
                   Prev
                 </button>
-                <span className="px-2 text-xs text-slate-500">
-                  Page {currentPage} of {totalPages || 1}
-                </span>
+                <span className="px-2 text-xs text-slate-500">Page {cursorHistory.length}</span>
                 <button
                   type="button"
-                  onClick={() => setPage((p) => Math.min(totalPages || 1, p + 1))}
-                  disabled={currentPage >= totalPages}
+                  onClick={() => {
+                    if (!membersResult?.authorized || !membersResult.continueCursor) return;
+                    setCursorHistory((history) => [...history, membersResult.continueCursor]);
+                  }}
+                  disabled={
+                    !membersResult?.authorized ||
+                    membersResult.isDone ||
+                    !membersResult.continueCursor
+                  }
                   className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
                 >
                   Next

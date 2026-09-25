@@ -1,10 +1,22 @@
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { getAssociationLogoUrl } from "./associationUtils";
 import { getPortalAccess, requireAdmin } from "./adminAuth";
 import { getViewerAssociationIds } from "./viewerAccess";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
+import {
+  adjustMemberStats,
+  applyStatsDelta,
+  buildSearchText,
+  emptyStats,
+  getGlobalStats,
+  markRebuildStarted,
+  periodCounts,
+  writeStatsSnapshot,
+  type StatsSnapshot,
+} from "./memberStats";
 
 function maskNin(nin: string) {
   if (nin.length <= 4) return "****";
@@ -24,20 +36,36 @@ type MemberFilters = {
   toDate?: number;
 };
 
-type MemberRow = {
-  id: Id<"members">;
-  generatedId: string;
-  memberIdNumber: string;
-  fullName: string;
-  state: string;
-  phone: string;
-  nin: string;
-  associationId: Id<"associations">;
-  associationName: string;
-  associationCode: string;
-  phoneVerified: boolean;
-  createdAt: number;
-};
+const MAX_PAGE_SIZE = 200;
+const SCAN_BATCH = 80;
+const MAX_SCAN = 2000;
+const REBUILD_STALE_MS = 15 * 60 * 1000;
+
+function toMemberRow(
+  member: Doc<"members">,
+  associationMap: Map<string, { name: string; code: string }>
+) {
+  const assoc = associationMap.get(member.associationId as string);
+  return {
+    id: member._id,
+    generatedId: member.generatedId,
+    memberIdNumber: member.memberIdNumber ?? "",
+    fullName: member.fullName,
+    state: member.state,
+    phone: maskPhone(member.phone),
+    nin: maskNin(member.nin),
+    associationId: member.associationId,
+    associationName: assoc?.name ?? member.associationCode,
+    associationCode: assoc?.code ?? member.associationCode,
+    phoneVerified: member.phoneVerified,
+    createdAt: member.createdAt,
+  };
+}
+
+async function associationMap(ctx: QueryCtx) {
+  const associations = await ctx.db.query("associations").collect();
+  return new Map(associations.map((association) => [association._id as string, association]));
+}
 
 async function getAllowedAssociationIds(
   ctx: QueryCtx,
@@ -49,82 +77,345 @@ async function getAllowedAssociationIds(
   return await getViewerAssociationIds(ctx, email);
 }
 
-async function getFilteredMembers(
-  ctx: QueryCtx,
-  args: MemberFilters,
-  allowedAssociationIds: Id<"associations">[] | null = null
-): Promise<MemberRow[]> {
-  const associations = await ctx.db.query("associations").collect();
-  const associationMap = new Map(
-    associations.map((a) => [a._id, { name: a.name, code: a.code }])
-  );
-
-  let members = await ctx.db.query("members").collect();
-  const search = args.search?.trim().toLowerCase();
-
-  members = members.filter((member) => {
-    if (allowedAssociationIds && !allowedAssociationIds.includes(member.associationId)) {
-      return false;
-    }
-    if (args.associationId) {
-      if (allowedAssociationIds && !allowedAssociationIds.includes(args.associationId)) {
-        return false;
-      }
-      if (member.associationId !== args.associationId) {
-        return false;
-      }
-    }
-    if (args.state && member.state !== args.state) {
-      return false;
-    }
-    if (args.fromDate && member.createdAt < args.fromDate) {
-      return false;
-    }
-    if (args.toDate && member.createdAt > args.toDate) {
-      return false;
-    }
-    if (search) {
-      const haystack = [
-        member.fullName,
-        member.generatedId,
-        member.memberIdNumber,
-        member.phone,
-        member.state,
-        member.associationCode,
-        associationMap.get(member.associationId)?.name ?? "",
-      ]
-        .join(" ")
-        .toLowerCase();
-      if (!haystack.includes(search)) return false;
-    }
-    return true;
-  });
-
-  return members
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .map((member) => {
-      const assoc = associationMap.get(member.associationId);
-      return {
-        id: member._id,
-        generatedId: member.generatedId,
-        memberIdNumber: member.memberIdNumber ?? "",
-        fullName: member.fullName,
-        state: member.state,
-        phone: maskPhone(member.phone),
-        nin: maskNin(member.nin),
-        associationId: member.associationId,
-        associationName: assoc?.name ?? member.associationCode,
-        associationCode: assoc?.code ?? member.associationCode,
-        phoneVerified: member.phoneVerified,
-        createdAt: member.createdAt,
-      };
-    });
+function withinDates(member: Doc<"members">, filters: MemberFilters) {
+  if (filters.fromDate && member.createdAt < filters.fromDate) return false;
+  if (filters.toDate && member.createdAt > filters.toDate) return false;
+  return true;
 }
 
-function startOfDay(ts: number) {
-  const d = new Date(ts);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
+function allowedAssociation(
+  member: Doc<"members">,
+  allowedAssociationIds: Id<"associations">[] | null,
+  associationId?: Id<"associations">
+) {
+  if (associationId && member.associationId !== associationId) return false;
+  if (allowedAssociationIds && !allowedAssociationIds.includes(member.associationId)) return false;
+  return true;
+}
+
+async function takeByCreatedAt(
+  ctx: QueryCtx,
+  filters: MemberFilters,
+  before: number | undefined,
+  limit: number
+) {
+  return await ctx.db
+    .query("members")
+    .withIndex("byCreatedAt", (q) => {
+      const upper = upperCreatedAt(before, filters.toDate);
+      if (filters.fromDate !== undefined && upper) {
+        return upper.op === "lt"
+          ? q.gte("createdAt", filters.fromDate).lt("createdAt", upper.value)
+          : q.gte("createdAt", filters.fromDate).lte("createdAt", upper.value);
+      }
+      if (filters.fromDate !== undefined) return q.gte("createdAt", filters.fromDate);
+      if (upper?.op === "lt") return q.lt("createdAt", upper.value);
+      if (upper?.op === "lte") return q.lte("createdAt", upper.value);
+      return q;
+    })
+    .order("desc")
+    .take(limit);
+}
+
+async function takeByAssociation(
+  ctx: QueryCtx,
+  associationId: Id<"associations">,
+  filters: MemberFilters,
+  before: number | undefined,
+  limit: number
+) {
+  return await ctx.db
+    .query("members")
+    .withIndex("byAssociationCreatedAt", (q) => {
+      const base = q.eq("associationId", associationId);
+      const upper = upperCreatedAt(before, filters.toDate);
+      if (filters.fromDate !== undefined && upper) {
+        return upper.op === "lt"
+          ? base.gte("createdAt", filters.fromDate).lt("createdAt", upper.value)
+          : base.gte("createdAt", filters.fromDate).lte("createdAt", upper.value);
+      }
+      if (filters.fromDate !== undefined) return base.gte("createdAt", filters.fromDate);
+      if (upper?.op === "lt") return base.lt("createdAt", upper.value);
+      if (upper?.op === "lte") return base.lte("createdAt", upper.value);
+      return base;
+    })
+    .order("desc")
+    .take(limit);
+}
+
+async function takeByState(
+  ctx: QueryCtx,
+  state: string,
+  filters: MemberFilters,
+  before: number | undefined,
+  limit: number
+) {
+  return await ctx.db
+    .query("members")
+    .withIndex("byStateCreatedAt", (q) => {
+      const base = q.eq("state", state);
+      const upper = upperCreatedAt(before, filters.toDate);
+      if (filters.fromDate !== undefined && upper) {
+        return upper.op === "lt"
+          ? base.gte("createdAt", filters.fromDate).lt("createdAt", upper.value)
+          : base.gte("createdAt", filters.fromDate).lte("createdAt", upper.value);
+      }
+      if (filters.fromDate !== undefined) return base.gte("createdAt", filters.fromDate);
+      if (upper?.op === "lt") return base.lt("createdAt", upper.value);
+      if (upper?.op === "lte") return base.lte("createdAt", upper.value);
+      return base;
+    })
+    .order("desc")
+    .take(limit);
+}
+
+function upperCreatedAt(before: number | undefined, toDate: number | undefined) {
+  if (before !== undefined && (toDate === undefined || before <= toDate)) {
+    return { op: "lt" as const, value: before };
+  }
+  if (toDate !== undefined) return { op: "lte" as const, value: toDate };
+  return undefined;
+}
+
+function createdAtCursor(cursor: string | undefined) {
+  if (!cursor?.startsWith("t:")) return undefined;
+  const value = Number(cursor.slice(2));
+  return Number.isFinite(value) ? value : undefined;
+}
+
+async function pageMembers(
+  ctx: QueryCtx,
+  filters: MemberFilters,
+  allowedAssociationIds: Id<"associations">[] | null,
+  cursor: string | undefined,
+  pageSize: number
+) {
+  if (allowedAssociationIds && filters.associationId && !allowedAssociationIds.includes(filters.associationId)) {
+    return { members: [] as Doc<"members">[], isDone: true, continueCursor: "" };
+  }
+  if (allowedAssociationIds?.length === 0) {
+    return { members: [] as Doc<"members">[], isDone: true, continueCursor: "" };
+  }
+
+  if (filters.search) {
+    return await pageBySearch(ctx, filters, allowedAssociationIds, cursor, pageSize);
+  }
+
+  const before = createdAtCursor(cursor);
+  const singleAssociation =
+    filters.associationId ??
+    (allowedAssociationIds?.length === 1 ? allowedAssociationIds[0] : undefined);
+
+  if (singleAssociation) {
+    return await pageByScan(
+      (limit, startBefore) => takeByAssociation(ctx, singleAssociation, filters, startBefore, limit),
+      (member) =>
+        (!filters.state || member.state === filters.state) && withinDates(member, filters),
+      before,
+      pageSize
+    );
+  }
+
+  if (filters.state) {
+    return await pageByScan(
+      (limit, startBefore) => takeByState(ctx, filters.state!, filters, startBefore, limit),
+      (member) => allowedAssociation(member, allowedAssociationIds, filters.associationId),
+      before,
+      pageSize
+    );
+  }
+
+  if (allowedAssociationIds && allowedAssociationIds.length > 1) {
+    return await pageAcrossAssociations(ctx, allowedAssociationIds, filters, before, pageSize);
+  }
+
+  return await pageByScan(
+    (limit, startBefore) => takeByCreatedAt(ctx, filters, startBefore, limit),
+    () => true,
+    before,
+    pageSize
+  );
+}
+
+async function pageByScan(
+  take: (limit: number, before: number | undefined) => Promise<Doc<"members">[]>,
+  keep: (member: Doc<"members">) => boolean,
+  before: number | undefined,
+  pageSize: number
+) {
+  const members: Doc<"members">[] = [];
+  let scanned = 0;
+  let cursorBefore = before;
+  let exhausted = false;
+
+  while (members.length < pageSize && scanned < MAX_SCAN) {
+    const batch = await take(Math.min(SCAN_BATCH, MAX_SCAN - scanned), cursorBefore);
+    if (batch.length === 0) {
+      exhausted = true;
+      break;
+    }
+    scanned += batch.length;
+    for (const member of batch) {
+      cursorBefore = member.createdAt;
+      if (!keep(member)) continue;
+      members.push(member);
+      if (members.length === pageSize) break;
+    }
+    if (members.length === pageSize) break;
+    if (batch.length < SCAN_BATCH) {
+      exhausted = true;
+      break;
+    }
+  }
+
+  const isDone = exhausted && members.length < pageSize;
+  const boundary = members.at(-1)?.createdAt ?? cursorBefore;
+  return {
+    members,
+    isDone,
+    continueCursor: isDone || boundary === undefined ? "" : `t:${boundary}`,
+  };
+}
+
+async function pageAcrossAssociations(
+  ctx: QueryCtx,
+  associationIds: Id<"associations">[],
+  filters: MemberFilters,
+  before: number | undefined,
+  pageSize: number
+) {
+  const lists = await Promise.all(
+    associationIds.map((associationId) =>
+      takeByAssociation(ctx, associationId, filters, before, pageSize)
+    )
+  );
+  const merged = lists
+    .flat()
+    .filter((member) => !filters.state || member.state === filters.state)
+    .sort((a, b) => b.createdAt - a.createdAt);
+  const members = merged.slice(0, pageSize);
+  const isDone = members.length < pageSize && lists.every((list) => list.length < pageSize);
+  const boundary =
+    members.at(-1)?.createdAt ??
+    lists.flat().reduce<number | undefined>((oldest, member) => {
+      if (oldest === undefined || member.createdAt < oldest) return member.createdAt;
+      return oldest;
+    }, undefined);
+
+  return {
+    members,
+    isDone,
+    continueCursor: isDone || boundary === undefined ? "" : `t:${boundary}`,
+  };
+}
+
+async function pageBySearch(
+  ctx: QueryCtx,
+  filters: MemberFilters,
+  allowedAssociationIds: Id<"associations">[] | null,
+  cursor: string | undefined,
+  pageSize: number
+) {
+  let searchCursor = cursor?.startsWith("s:") ? cursor.slice(2) : null;
+  let matches: Doc<"members">[] = [];
+  let isDone = false;
+  let continueCursor = "";
+  let scanned = 0;
+
+  while (matches.length === 0 && scanned < MAX_SCAN) {
+    const page = await ctx.db
+      .query("members")
+      .withSearchIndex("search_members", (q) => {
+        let search = q.search("searchText", filters.search!);
+        if (filters.associationId) search = search.eq("associationId", filters.associationId);
+        if (filters.state) search = search.eq("state", filters.state);
+        return search;
+      })
+      .paginate({ numItems: pageSize, cursor: searchCursor });
+
+    scanned += page.page.length;
+    matches = page.page.filter(
+      (member) =>
+        allowedAssociation(member, allowedAssociationIds, filters.associationId) &&
+        withinDates(member, filters)
+    );
+    isDone = page.isDone;
+    continueCursor = page.continueCursor;
+    searchCursor = page.continueCursor;
+    if (page.isDone) break;
+  }
+
+  return {
+    members: matches,
+    isDone,
+    continueCursor: isDone ? "" : `s:${continueCursor}`,
+  };
+}
+
+async function visibleTotal(
+  ctx: QueryCtx,
+  filters: MemberFilters,
+  allowedAssociationIds: Id<"associations">[] | null
+) {
+  if (filters.search || filters.state || filters.fromDate || filters.toDate) return null;
+
+  if (filters.associationId) {
+    if (allowedAssociationIds && !allowedAssociationIds.includes(filters.associationId)) return 0;
+    const doc = await ctx.db
+      .query("dashboard_stats")
+      .withIndex("byKey", (q) => q.eq("key", `assoc:${filters.associationId}`))
+      .unique();
+    return doc?.ready ? doc.total : null;
+  }
+
+  if (allowedAssociationIds === null) {
+    const global = await getGlobalStats(ctx);
+    return global?.ready ? global.total : null;
+  }
+
+  let total = 0;
+  for (const associationId of allowedAssociationIds) {
+    const doc = await ctx.db
+      .query("dashboard_stats")
+      .withIndex("byKey", (q) => q.eq("key", `assoc:${associationId}`))
+      .unique();
+    if (!doc?.ready) return null;
+    total += doc.total;
+  }
+  return total;
+}
+
+async function recentMembers(
+  ctx: QueryCtx,
+  allowedAssociationIds: Id<"associations">[] | null,
+  names: Map<string, { name: string }>
+) {
+  const rows =
+    allowedAssociationIds === null
+      ? await ctx.db.query("members").withIndex("byCreatedAt").order("desc").take(8)
+      : (
+          await Promise.all(
+            allowedAssociationIds.map((associationId) =>
+              ctx.db
+                .query("members")
+                .withIndex("byAssociationCreatedAt", (q) => q.eq("associationId", associationId))
+                .order("desc")
+                .take(8)
+            )
+          )
+        )
+          .flat()
+          .sort((a, b) => b.createdAt - a.createdAt)
+          .slice(0, 8);
+
+  return rows.map((member) => ({
+    id: member._id,
+    generatedId: member.generatedId,
+    fullName: member.fullName,
+    state: member.state,
+    associationName: names.get(member.associationId as string)?.name ?? member.associationCode,
+    createdAt: member.createdAt,
+  }));
 }
 
 export const getPortalRole = query({
@@ -154,87 +445,86 @@ export const getDashboard = query({
     }
 
     const allowedAssociationIds = await getAllowedAssociationIds(ctx, access);
-
-    let members = await ctx.db.query("members").collect();
     const associations = await ctx.db.query("associations").collect();
-    const allowedSet =
-      allowedAssociationIds === null ? null : new Set(allowedAssociationIds);
-    if (allowedSet) {
-      members = members.filter((member) => allowedSet.has(member.associationId));
+    const names = new Map(associations.map((association) => [association._id as string, association]));
+    const global = await getGlobalStats(ctx);
+    const daily: Record<string, number> = {};
+    const byState = new Map<string, number>();
+    const byAssociation: { name: string; count: number }[] = [];
+    let total = 0;
+    let needsRebuild = false;
+
+    if (allowedAssociationIds === null) {
+      needsRebuild = !global?.ready;
+      total = global?.total ?? 0;
+      for (const row of global?.byState ?? []) byState.set(row.name, row.count);
+      for (const row of global?.daily ?? []) daily[row.date] = row.count;
+      for (const row of global?.byAssociation ?? []) {
+        byAssociation.push({
+          name: names.get(row.id)?.name ?? row.id,
+          count: row.count,
+        });
+      }
+    } else {
+      const docs = await Promise.all(
+        allowedAssociationIds.map((associationId) =>
+          ctx.db
+            .query("dashboard_stats")
+            .withIndex("byKey", (q) => q.eq("key", `assoc:${associationId}`))
+            .unique()
+        )
+      );
+      needsRebuild = docs.some((doc) => !doc?.ready);
+      docs.forEach((doc, index) => {
+        const associationId = allowedAssociationIds[index];
+        total += doc?.total ?? 0;
+        byAssociation.push({
+          name: names.get(associationId as string)?.name ?? associationId,
+          count: doc?.total ?? 0,
+        });
+        for (const row of doc?.byState ?? []) {
+          byState.set(row.name, (byState.get(row.name) ?? 0) + row.count);
+        }
+        for (const row of doc?.daily ?? []) {
+          daily[row.date] = (daily[row.date] ?? 0) + row.count;
+        }
+      });
     }
-    const visibleAssociations =
-      allowedSet === null
-        ? associations
-        : associations.filter((assoc) => allowedSet.has(assoc._id));
 
-    const associationMap = new Map(visibleAssociations.map((a) => [a._id, a.name]));
-
-    const now = Date.now();
-    const todayStart = startOfDay(now);
-    const weekStart = todayStart - 6 * 24 * 60 * 60 * 1000;
-    const monthStart = new Date(new Date(now).getFullYear(), new Date(now).getMonth(), 1).getTime();
-
-    const byAssociation: Record<string, number> = {};
-    const byState: Record<string, number> = {};
-    const dailyCounts: Record<string, number> = {};
-
-    let today = 0;
-    let thisWeek = 0;
-    let thisMonth = 0;
-
-    for (const member of members) {
-      const assocName = associationMap.get(member.associationId) ?? member.associationCode;
-      byAssociation[assocName] = (byAssociation[assocName] ?? 0) + 1;
-      byState[member.state] = (byState[member.state] ?? 0) + 1;
-
-      const dayKey = new Date(member.createdAt).toISOString().slice(0, 10);
-      dailyCounts[dayKey] = (dailyCounts[dayKey] ?? 0) + 1;
-
-      if (member.createdAt >= todayStart) today += 1;
-      if (member.createdAt >= weekStart) thisWeek += 1;
-      if (member.createdAt >= monthStart) thisMonth += 1;
-    }
-
-    const last14Days = Array.from({ length: 14 }, (_, i) => {
-      const d = new Date(todayStart - (13 - i) * 24 * 60 * 60 * 1000);
-      const key = d.toISOString().slice(0, 10);
+    const periods = periodCounts(daily);
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+    const last14Days = Array.from({ length: 14 }, (_, index) => {
+      const date = new Date(todayStart.getTime() - (13 - index) * 24 * 60 * 60 * 1000);
+      const key = date.toISOString().slice(0, 10);
       return {
         date: key,
-        label: d.toLocaleDateString("en-NG", { month: "short", day: "numeric" }),
-        count: dailyCounts[key] ?? 0,
+        label: date.toLocaleDateString("en-NG", { month: "short", day: "numeric", timeZone: "UTC" }),
+        count: daily[key] ?? 0,
       };
     });
-
-    const recent = [...members]
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, 8)
-      .map((m) => ({
-        id: m._id,
-        generatedId: m.generatedId,
-        fullName: m.fullName,
-        state: m.state,
-        associationName: associationMap.get(m.associationId) ?? m.associationCode,
-        createdAt: m.createdAt,
-      }));
+    const visibleAssociations =
+      allowedAssociationIds === null
+        ? associations
+        : associations.filter((association) => allowedAssociationIds.includes(association._id));
 
     return {
       authorized: true as const,
       role: access.role,
+      needsRebuild,
       totals: {
-        all: members.length,
-        today,
-        thisWeek,
-        thisMonth,
-        associations: visibleAssociations.filter((a) => a.isActive).length,
+        all: total,
+        today: periods.today,
+        thisWeek: periods.thisWeek,
+        thisMonth: periods.thisMonth,
+        associations: visibleAssociations.filter((association) => association.isActive).length,
       },
-      byAssociation: Object.entries(byAssociation)
-        .map(([name, count]) => ({ name, count }))
-        .sort((a, b) => b.count - a.count),
-      byState: Object.entries(byState)
+      byAssociation: byAssociation.sort((a, b) => b.count - a.count),
+      byState: [...byState.entries()]
         .map(([name, count]) => ({ name, count }))
         .sort((a, b) => b.count - a.count),
       dailyRegistrations: last14Days,
-      recent,
+      recent: await recentMembers(ctx, allowedAssociationIds, names),
     };
   },
 });
@@ -246,7 +536,7 @@ export const listMembers = query({
     state: v.optional(v.string()),
     fromDate: v.optional(v.number()),
     toDate: v.optional(v.number()),
-    page: v.optional(v.number()),
+    cursor: v.optional(v.string()),
     pageSize: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -256,53 +546,88 @@ export const listMembers = query({
         authorized: false as const,
         reason: access.reason,
         members: [] as const,
-        total: 0,
-        page: 1,
+        total: null,
         pageSize: 25,
-        totalPages: 0,
+        isDone: true,
+        continueCursor: "",
       };
     }
 
     const allowedAssociationIds = await getAllowedAssociationIds(ctx, access);
-    const { page: pageArg, pageSize: pageSizeArg, ...filters } = args;
-    const all = await getFilteredMembers(ctx, filters, allowedAssociationIds);
-    const pageSize = Math.min(100, Math.max(10, pageSizeArg ?? 25));
-    const totalPages = Math.max(1, Math.ceil(all.length / pageSize));
-    const page = Math.min(Math.max(1, pageArg ?? 1), totalPages);
-    const start = (page - 1) * pageSize;
+    const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(10, args.pageSize ?? 25));
+    const filters: MemberFilters = {
+      search: args.search?.trim() || undefined,
+      associationId: args.associationId,
+      state: args.state || undefined,
+      fromDate: args.fromDate,
+      toDate: args.toDate,
+    };
+    const page = await pageMembers(ctx, filters, allowedAssociationIds, args.cursor, pageSize);
+    const associations = await associationMap(ctx);
 
     return {
       authorized: true as const,
       role: access.role,
-      members: all.slice(start, start + pageSize),
-      total: all.length,
-      page,
+      members: page.members.map((member) => toMemberRow(member, associations)),
+      total: await visibleTotal(ctx, filters, allowedAssociationIds),
       pageSize,
-      totalPages: all.length === 0 ? 0 : totalPages,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
     };
   },
 });
 
-export const exportMembers = query({
-  args: {
-    search: v.optional(v.string()),
-    associationId: v.optional(v.id("associations")),
-    state: v.optional(v.string()),
-    fromDate: v.optional(v.number()),
-    toDate: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
+export const startStatsRebuild = mutation({
+  args: {},
+  handler: async (ctx) => {
     const access = await getPortalAccess(ctx);
     if (!access.authorized) {
-      return { authorized: false as const, reason: access.reason, members: [] as const };
+      throw new Error("You are not authorized to access the portal.");
     }
 
-    const allowedAssociationIds = await getAllowedAssociationIds(ctx, access);
+    const existing = await getGlobalStats(ctx);
+    if (existing?.ready && !existing.rebuilding) return { started: false };
+    if (existing?.rebuilding && Date.now() - existing.updatedAt < REBUILD_STALE_MS) {
+      return { started: false };
+    }
 
-    return {
-      authorized: true as const,
-      members: await getFilteredMembers(ctx, args, allowedAssociationIds),
-    };
+    await markRebuildStarted(ctx);
+    await ctx.scheduler.runAfter(0, internal.admin.rebuildStatsBatch, {
+      cursor: null,
+      stats: emptyStats(),
+    });
+    return { started: true };
+  },
+});
+
+export const rebuildStatsBatch = internalMutation({
+  args: {
+    cursor: v.union(v.string(), v.null()),
+    stats: v.any(),
+  },
+  handler: async (ctx, args) => {
+    const stats = args.stats as StatsSnapshot;
+    const page = await ctx.db.query("members").withIndex("byCreatedAt").paginate({
+      numItems: 300,
+      cursor: args.cursor,
+    });
+
+    for (const member of page.page) {
+      applyStatsDelta(stats, member, 1);
+      if (!member.searchText) {
+        await ctx.db.patch(member._id, { searchText: buildSearchText(member) });
+      }
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.admin.rebuildStatsBatch, {
+        cursor: page.continueCursor,
+        stats,
+      });
+      return;
+    }
+
+    await writeStatsSnapshot(ctx, stats);
   },
 });
 
@@ -341,11 +666,8 @@ export const listAssociations = query({
     }
 
     const rows = await ctx.db.query("associations").collect();
-    const members = await ctx.db.query("members").collect();
-    const memberCounts = new Map<string, number>();
-    for (const member of members) {
-      memberCounts.set(member.associationId, (memberCounts.get(member.associationId) ?? 0) + 1);
-    }
+    const global = await getGlobalStats(ctx);
+    const memberCounts = new Map((global?.byAssociation ?? []).map((row) => [row.id, row.count]));
 
     return {
       authorized: true as const,
@@ -359,7 +681,7 @@ export const listAssociations = query({
             code: a.code,
             logoUrl: (await getAssociationLogoUrl(ctx, a)) ?? "",
             isActive: a.isActive,
-            memberCount: memberCounts.get(a._id) ?? 0,
+            memberCount: memberCounts.get(a._id as string) ?? 0,
             createdAt: a.createdAt,
           }))
       ),
@@ -413,6 +735,7 @@ export const deleteMember = mutation({
     if (!member) {
       throw new Error("Member not found.");
     }
+    await adjustMemberStats(ctx, member, -1);
     await ctx.db.delete(memberId);
     return { deleted: true, generatedId: member.generatedId };
   },
@@ -426,7 +749,7 @@ export const listDataIssues = query({
       return { authorized: false as const, reason: access.authorized ? "forbidden" as const : access.reason, issues: [] as const };
     }
 
-    const members = await ctx.db.query("members").collect();
+    const members = await ctx.db.query("members").withIndex("byCreatedAt").order("desc").take(2000);
     const associations = await ctx.db.query("associations").collect();
     const associationMap = new Map(associations.map((a) => [a._id, a.name]));
 

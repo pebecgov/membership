@@ -26,12 +26,21 @@ export default defineSchema({
     generatedId: v.string(),
     phoneVerified: v.boolean(),
     createdAt: v.number(),
+    /** Denormalized text for admin search, filled on write and by stats rebuild */
+    searchText: v.optional(v.string()),
   })
     .index("byGeneratedId", ["generatedId"])
     .index("byPhone", ["phone"])
     .index("byNin", ["nin"])
     .index("byMemberIdNumber", ["memberIdNumber"])
-    .index("byAssociation", ["associationId"]),
+    .index("byAssociation", ["associationId"])
+    .index("byCreatedAt", ["createdAt"])
+    .index("byAssociationCreatedAt", ["associationId", "createdAt"])
+    .index("byStateCreatedAt", ["state", "createdAt"])
+    .searchIndex("search_members", {
+      searchField: "searchText",
+      filterFields: ["associationId", "state"],
+    }),
 
   otp_sessions: defineTable({
     phone: v.string(),
@@ -54,4 +63,16 @@ export default defineSchema({
     associationIds: v.array(v.id("associations")),
     updatedAt: v.number(),
   }).index("byEmail", ["email"]),
+
+  /** Denormalized counts so the dashboard never scans every member. */
+  dashboard_stats: defineTable({
+    key: v.string(),
+    total: v.number(),
+    byState: v.array(v.object({ name: v.string(), count: v.number() })),
+    byAssociation: v.array(v.object({ id: v.string(), count: v.number() })),
+    daily: v.array(v.object({ date: v.string(), count: v.number() })),
+    ready: v.boolean(),
+    rebuilding: v.boolean(),
+    updatedAt: v.number(),
+  }).index("byKey", ["key"]),
 });

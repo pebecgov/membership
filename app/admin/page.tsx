@@ -1,7 +1,7 @@
 "use client";
 
-import { useConvexAuth } from "convex/react";
-import { useQuery } from "convex/react";
+import { useEffect, useRef } from "react";
+import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { BarChart } from "@/components/admin/BarChart";
 import { DailyChart } from "@/components/admin/DailyChart";
@@ -19,6 +19,14 @@ export default function AdminDashboardPage() {
   const { isAuthenticated } = useConvexAuth();
   const dashboard = useQuery(api.admin.getDashboard, isAuthenticated ? {} : "skip");
   const roleResult = useQuery(api.admin.getPortalRole, isAuthenticated ? {} : "skip");
+  const startRebuild = useMutation(api.admin.startStatsRebuild);
+  const rebuildStarted = useRef(false);
+
+  useEffect(() => {
+    if (!dashboard?.authorized || !dashboard.needsRebuild || rebuildStarted.current) return;
+    rebuildStarted.current = true;
+    void startRebuild({});
+  }, [dashboard, startRebuild]);
   const viewerHasNoAccess =
     roleResult?.authorized &&
     roleResult.role === "viewer" &&
@@ -49,6 +57,10 @@ export default function AdminDashboardPage() {
           Your viewer account does not have any associations assigned yet. Ask an admin to grant
           access from the Viewer access page.
         </div>
+      )}
+
+      {dashboard.needsRebuild && (
+        <p className="text-sm text-slate-500">Calculating totals from existing registrations…</p>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">

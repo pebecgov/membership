@@ -45,8 +45,8 @@ export function DataIssuesPanel() {
     <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm sm:p-5">
       <h2 className="text-sm font-semibold text-amber-900">Duplicate data issues</h2>
       <p className="mt-1 text-sm text-amber-800">
-        These records share the same phone, NIN, or ID and can block new registrations. Delete
-        mistaken or test entries to allow a fresh signup.
+        These records share the same phone, NIN, or ID among the most recent registrations and can
+        block new signups. Delete mistaken or test entries to allow a fresh signup.
       </p>
 
       {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
