@@ -37,8 +37,313 @@ type MemberFilters = {
 };
 
 const MAX_PAGE_SIZE = 200;
-const SCAN_BATCH = 80;
-const MAX_SCAN = 2000;
+
+function paginationCursor(cursor: string | undefined) {
+  if (!cursor || cursor === "") return null;
+  if (cursor.startsWith("s:")) return cursor.slice(2);
+  if (cursor.startsWith("c:")) return cursor.slice(2);
+  return cursor;
+}
+
+function wrapCursor(kind: "c" | "s", continueCursor: string, isDone: boolean) {
+  return {
+    isDone,
+    continueCursor: isDone || !continueCursor ? "" : `${kind}:${continueCursor}`,
+  };
+}
+
+async function pageMembers(
+  ctx: QueryCtx,
+  filters: MemberFilters,
+  allowedAssociationIds: Id<"associations">[] | null,
+  cursor: string | undefined,
+  pageSize: number
+) {
+  if (allowedAssociationIds && filters.associationId && !allowedAssociationIds.includes(filters.associationId)) {
+    return { members: [] as Doc<"members">[], isDone: true, continueCursor: "" };
+  }
+  if (allowedAssociationIds?.length === 0) {
+    return { members: [] as Doc<"members">[], isDone: true, continueCursor: "" };
+  }
+
+  if (filters.search) {
+    return await pageBySearch(ctx, filters, allowedAssociationIds, cursor, pageSize);
+  }
+
+  const singleAssociation =
+    filters.associationId ??
+    (allowedAssociationIds?.length === 1 ? allowedAssociationIds[0] : undefined);
+
+  // Prefer Convex native pagination so we never skip same-timestamp rows.
+  if (singleAssociation && !filters.state && !filters.fromDate && !filters.toDate) {
+    const page = await ctx.db
+      .query("members")
+      .withIndex("byAssociationCreatedAt", (q) => q.eq("associationId", singleAssociation))
+      .order("desc")
+      .paginate({ numItems: pageSize, cursor: paginationCursor(cursor) });
+    return { members: page.page, ...wrapCursor("c", page.continueCursor, page.isDone) };
+  }
+
+  if (filters.state && !filters.fromDate && !filters.toDate && allowedAssociationIds === null && !filters.associationId) {
+    const page = await ctx.db
+      .query("members")
+      .withIndex("byStateCreatedAt", (q) => q.eq("state", filters.state!))
+      .order("desc")
+      .paginate({ numItems: pageSize, cursor: paginationCursor(cursor) });
+    return { members: page.page, ...wrapCursor("c", page.continueCursor, page.isDone) };
+  }
+
+  if (
+    !filters.state &&
+    !filters.fromDate &&
+    !filters.toDate &&
+    !filters.associationId &&
+    allowedAssociationIds === null
+  ) {
+    const page = await ctx.db
+      .query("members")
+      .withIndex("byCreatedAt")
+      .order("desc")
+      .paginate({ numItems: pageSize, cursor: paginationCursor(cursor) });
+    return { members: page.page, ...wrapCursor("c", page.continueCursor, page.isDone) };
+  }
+
+  // Mixed filters: native-paginate the best index, then filter in-page until full.
+  return await pageByFilteredIndex(ctx, filters, allowedAssociationIds, cursor, pageSize);
+}
+
+async function pageByFilteredIndex(
+  ctx: QueryCtx,
+  filters: MemberFilters,
+  allowedAssociationIds: Id<"associations">[] | null,
+  cursor: string | undefined,
+  pageSize: number
+) {
+  let nextCursor = paginationCursor(cursor);
+  const members: Doc<"members">[] = [];
+  let isDone = false;
+  let continueCursor = "";
+  let guard = 0;
+
+  while (members.length < pageSize && guard < 20) {
+    guard += 1;
+    const page = await takeIndexedPage(ctx, filters, allowedAssociationIds, nextCursor, pageSize);
+    for (const member of page.page) {
+      if (!matchesFilters(member, filters, allowedAssociationIds)) continue;
+      members.push(member);
+      if (members.length === pageSize) break;
+    }
+    isDone = page.isDone;
+    continueCursor = page.continueCursor;
+    nextCursor = page.continueCursor;
+    if (page.isDone) break;
+    if (members.length === pageSize) break;
+  }
+
+  return { members, ...wrapCursor("c", continueCursor, isDone && members.length < pageSize) };
+}
+
+function matchesFilters(
+  member: Doc<"members">,
+  filters: MemberFilters,
+  allowedAssociationIds: Id<"associations">[] | null
+) {
+  if (!allowedAssociation(member, allowedAssociationIds, filters.associationId)) return false;
+  if (filters.state && member.state !== filters.state) return false;
+  return withinDates(member, filters);
+}
+
+async function takeIndexedPage(
+  ctx: QueryCtx,
+  filters: MemberFilters,
+  allowedAssociationIds: Id<"associations">[] | null,
+  cursor: string | null,
+  pageSize: number
+) {
+  const singleAssociation =
+    filters.associationId ??
+    (allowedAssociationIds?.length === 1 ? allowedAssociationIds[0] : undefined);
+
+  if (singleAssociation) {
+    return await ctx.db
+      .query("members")
+      .withIndex("byAssociationCreatedAt", (q) => {
+        const base = q.eq("associationId", singleAssociation);
+        if (filters.fromDate !== undefined && filters.toDate !== undefined) {
+          return base.gte("createdAt", filters.fromDate).lte("createdAt", filters.toDate);
+        }
+        if (filters.fromDate !== undefined) return base.gte("createdAt", filters.fromDate);
+        if (filters.toDate !== undefined) return base.lte("createdAt", filters.toDate);
+        return base;
+      })
+      .order("desc")
+      .paginate({ numItems: pageSize, cursor });
+  }
+
+  if (filters.state) {
+    return await ctx.db
+      .query("members")
+      .withIndex("byStateCreatedAt", (q) => {
+        const base = q.eq("state", filters.state!);
+        if (filters.fromDate !== undefined && filters.toDate !== undefined) {
+          return base.gte("createdAt", filters.fromDate).lte("createdAt", filters.toDate);
+        }
+        if (filters.fromDate !== undefined) return base.gte("createdAt", filters.fromDate);
+        if (filters.toDate !== undefined) return base.lte("createdAt", filters.toDate);
+        return base;
+      })
+      .order("desc")
+      .paginate({ numItems: pageSize, cursor });
+  }
+
+  if (allowedAssociationIds && allowedAssociationIds.length > 1) {
+    // Fall back to createdAt scan and filter to allowed associations.
+    return await ctx.db
+      .query("members")
+      .withIndex("byCreatedAt", (q) => {
+        if (filters.fromDate !== undefined && filters.toDate !== undefined) {
+          return q.gte("createdAt", filters.fromDate).lte("createdAt", filters.toDate);
+        }
+        if (filters.fromDate !== undefined) return q.gte("createdAt", filters.fromDate);
+        if (filters.toDate !== undefined) return q.lte("createdAt", filters.toDate);
+        return q;
+      })
+      .order("desc")
+      .paginate({ numItems: pageSize, cursor });
+  }
+
+  return await ctx.db
+    .query("members")
+    .withIndex("byCreatedAt", (q) => {
+      if (filters.fromDate !== undefined && filters.toDate !== undefined) {
+        return q.gte("createdAt", filters.fromDate).lte("createdAt", filters.toDate);
+      }
+      if (filters.fromDate !== undefined) return q.gte("createdAt", filters.fromDate);
+      if (filters.toDate !== undefined) return q.lte("createdAt", filters.toDate);
+      return q;
+    })
+    .order("desc")
+    .paginate({ numItems: pageSize, cursor });
+}
+
+async function pageBySearch(
+  ctx: QueryCtx,
+  filters: MemberFilters,
+  allowedAssociationIds: Id<"associations">[] | null,
+  cursor: string | undefined,
+  pageSize: number
+) {
+  let searchCursor = paginationCursor(cursor);
+  let matches: Doc<"members">[] = [];
+  let isDone = false;
+  let continueCursor = "";
+  let guard = 0;
+
+  while (matches.length < pageSize && guard < 20) {
+    guard += 1;
+    const page = await ctx.db
+      .query("members")
+      .withSearchIndex("search_members", (q) => {
+        let search = q.search("searchText", filters.search!);
+        if (filters.associationId) search = search.eq("associationId", filters.associationId);
+        if (filters.state) search = search.eq("state", filters.state);
+        return search;
+      })
+      .paginate({ numItems: pageSize, cursor: searchCursor });
+
+    for (const member of page.page) {
+      if (!matchesFilters(member, filters, allowedAssociationIds)) continue;
+      matches.push(member);
+      if (matches.length === pageSize) break;
+    }
+    isDone = page.isDone;
+    continueCursor = page.continueCursor;
+    searchCursor = page.continueCursor;
+    if (page.isDone) break;
+    if (matches.length === pageSize) break;
+  }
+
+  return {
+    members: matches,
+    ...wrapCursor("s", continueCursor, isDone && matches.length < pageSize),
+  };
+}
+
+async function stateCountFromStats(
+  ctx: QueryCtx,
+  state: string,
+  associationId: Id<"associations"> | undefined,
+  allowedAssociationIds: Id<"associations">[] | null
+) {
+  if (associationId) {
+    if (allowedAssociationIds && !allowedAssociationIds.includes(associationId)) return 0;
+    const doc = await ctx.db
+      .query("dashboard_stats")
+      .withIndex("byKey", (q) => q.eq("key", `assoc:${associationId}`))
+      .unique();
+    if (!doc?.ready) return null;
+    return doc.byState.find((row) => row.name === state)?.count ?? 0;
+  }
+
+  if (allowedAssociationIds === null) {
+    const global = await getGlobalStats(ctx);
+    if (!global?.ready) return null;
+    return global.byState.find((row) => row.name === state)?.count ?? 0;
+  }
+
+  let total = 0;
+  for (const id of allowedAssociationIds) {
+    const doc = await ctx.db
+      .query("dashboard_stats")
+      .withIndex("byKey", (q) => q.eq("key", `assoc:${id}`))
+      .unique();
+    if (!doc?.ready) return null;
+    total += doc.byState.find((row) => row.name === state)?.count ?? 0;
+  }
+  return total;
+}
+
+async function visibleTotal(
+  ctx: QueryCtx,
+  filters: MemberFilters,
+  allowedAssociationIds: Id<"associations">[] | null
+) {
+  if (filters.search || filters.fromDate || filters.toDate) return null;
+
+  if (filters.state) {
+    return await stateCountFromStats(
+      ctx,
+      filters.state,
+      filters.associationId,
+      allowedAssociationIds
+    );
+  }
+
+  if (filters.associationId) {
+    if (allowedAssociationIds && !allowedAssociationIds.includes(filters.associationId)) return 0;
+    const doc = await ctx.db
+      .query("dashboard_stats")
+      .withIndex("byKey", (q) => q.eq("key", `assoc:${filters.associationId}`))
+      .unique();
+    return doc?.ready ? doc.total : null;
+  }
+
+  if (allowedAssociationIds === null) {
+    const global = await getGlobalStats(ctx);
+    return global?.ready ? global.total : null;
+  }
+
+  let total = 0;
+  for (const associationId of allowedAssociationIds) {
+    const doc = await ctx.db
+      .query("dashboard_stats")
+      .withIndex("byKey", (q) => q.eq("key", `assoc:${associationId}`))
+      .unique();
+    if (!doc?.ready) return null;
+    total += doc.total;
+  }
+  return total;
+}
 const REBUILD_STALE_MS = 15 * 60 * 1000;
 
 function toMemberRow(
@@ -91,298 +396,6 @@ function allowedAssociation(
   if (associationId && member.associationId !== associationId) return false;
   if (allowedAssociationIds && !allowedAssociationIds.includes(member.associationId)) return false;
   return true;
-}
-
-async function takeByCreatedAt(
-  ctx: QueryCtx,
-  filters: MemberFilters,
-  before: number | undefined,
-  limit: number
-) {
-  return await ctx.db
-    .query("members")
-    .withIndex("byCreatedAt", (q) => {
-      const upper = upperCreatedAt(before, filters.toDate);
-      if (filters.fromDate !== undefined && upper) {
-        return upper.op === "lt"
-          ? q.gte("createdAt", filters.fromDate).lt("createdAt", upper.value)
-          : q.gte("createdAt", filters.fromDate).lte("createdAt", upper.value);
-      }
-      if (filters.fromDate !== undefined) return q.gte("createdAt", filters.fromDate);
-      if (upper?.op === "lt") return q.lt("createdAt", upper.value);
-      if (upper?.op === "lte") return q.lte("createdAt", upper.value);
-      return q;
-    })
-    .order("desc")
-    .take(limit);
-}
-
-async function takeByAssociation(
-  ctx: QueryCtx,
-  associationId: Id<"associations">,
-  filters: MemberFilters,
-  before: number | undefined,
-  limit: number
-) {
-  return await ctx.db
-    .query("members")
-    .withIndex("byAssociationCreatedAt", (q) => {
-      const base = q.eq("associationId", associationId);
-      const upper = upperCreatedAt(before, filters.toDate);
-      if (filters.fromDate !== undefined && upper) {
-        return upper.op === "lt"
-          ? base.gte("createdAt", filters.fromDate).lt("createdAt", upper.value)
-          : base.gte("createdAt", filters.fromDate).lte("createdAt", upper.value);
-      }
-      if (filters.fromDate !== undefined) return base.gte("createdAt", filters.fromDate);
-      if (upper?.op === "lt") return base.lt("createdAt", upper.value);
-      if (upper?.op === "lte") return base.lte("createdAt", upper.value);
-      return base;
-    })
-    .order("desc")
-    .take(limit);
-}
-
-async function takeByState(
-  ctx: QueryCtx,
-  state: string,
-  filters: MemberFilters,
-  before: number | undefined,
-  limit: number
-) {
-  return await ctx.db
-    .query("members")
-    .withIndex("byStateCreatedAt", (q) => {
-      const base = q.eq("state", state);
-      const upper = upperCreatedAt(before, filters.toDate);
-      if (filters.fromDate !== undefined && upper) {
-        return upper.op === "lt"
-          ? base.gte("createdAt", filters.fromDate).lt("createdAt", upper.value)
-          : base.gte("createdAt", filters.fromDate).lte("createdAt", upper.value);
-      }
-      if (filters.fromDate !== undefined) return base.gte("createdAt", filters.fromDate);
-      if (upper?.op === "lt") return base.lt("createdAt", upper.value);
-      if (upper?.op === "lte") return base.lte("createdAt", upper.value);
-      return base;
-    })
-    .order("desc")
-    .take(limit);
-}
-
-function upperCreatedAt(before: number | undefined, toDate: number | undefined) {
-  if (before !== undefined && (toDate === undefined || before <= toDate)) {
-    return { op: "lt" as const, value: before };
-  }
-  if (toDate !== undefined) return { op: "lte" as const, value: toDate };
-  return undefined;
-}
-
-function createdAtCursor(cursor: string | undefined) {
-  if (!cursor?.startsWith("t:")) return undefined;
-  const value = Number(cursor.slice(2));
-  return Number.isFinite(value) ? value : undefined;
-}
-
-async function pageMembers(
-  ctx: QueryCtx,
-  filters: MemberFilters,
-  allowedAssociationIds: Id<"associations">[] | null,
-  cursor: string | undefined,
-  pageSize: number
-) {
-  if (allowedAssociationIds && filters.associationId && !allowedAssociationIds.includes(filters.associationId)) {
-    return { members: [] as Doc<"members">[], isDone: true, continueCursor: "" };
-  }
-  if (allowedAssociationIds?.length === 0) {
-    return { members: [] as Doc<"members">[], isDone: true, continueCursor: "" };
-  }
-
-  if (filters.search) {
-    return await pageBySearch(ctx, filters, allowedAssociationIds, cursor, pageSize);
-  }
-
-  const before = createdAtCursor(cursor);
-  const singleAssociation =
-    filters.associationId ??
-    (allowedAssociationIds?.length === 1 ? allowedAssociationIds[0] : undefined);
-
-  if (singleAssociation) {
-    return await pageByScan(
-      (limit, startBefore) => takeByAssociation(ctx, singleAssociation, filters, startBefore, limit),
-      (member) =>
-        (!filters.state || member.state === filters.state) && withinDates(member, filters),
-      before,
-      pageSize
-    );
-  }
-
-  if (filters.state) {
-    return await pageByScan(
-      (limit, startBefore) => takeByState(ctx, filters.state!, filters, startBefore, limit),
-      (member) => allowedAssociation(member, allowedAssociationIds, filters.associationId),
-      before,
-      pageSize
-    );
-  }
-
-  if (allowedAssociationIds && allowedAssociationIds.length > 1) {
-    return await pageAcrossAssociations(ctx, allowedAssociationIds, filters, before, pageSize);
-  }
-
-  return await pageByScan(
-    (limit, startBefore) => takeByCreatedAt(ctx, filters, startBefore, limit),
-    () => true,
-    before,
-    pageSize
-  );
-}
-
-async function pageByScan(
-  take: (limit: number, before: number | undefined) => Promise<Doc<"members">[]>,
-  keep: (member: Doc<"members">) => boolean,
-  before: number | undefined,
-  pageSize: number
-) {
-  const members: Doc<"members">[] = [];
-  let scanned = 0;
-  let cursorBefore = before;
-  let exhausted = false;
-
-  while (members.length < pageSize && scanned < MAX_SCAN) {
-    const batch = await take(Math.min(SCAN_BATCH, MAX_SCAN - scanned), cursorBefore);
-    if (batch.length === 0) {
-      exhausted = true;
-      break;
-    }
-    scanned += batch.length;
-    for (const member of batch) {
-      cursorBefore = member.createdAt;
-      if (!keep(member)) continue;
-      members.push(member);
-      if (members.length === pageSize) break;
-    }
-    if (members.length === pageSize) break;
-    if (batch.length < SCAN_BATCH) {
-      exhausted = true;
-      break;
-    }
-  }
-
-  const isDone = exhausted && members.length < pageSize;
-  const boundary = members.at(-1)?.createdAt ?? cursorBefore;
-  return {
-    members,
-    isDone,
-    continueCursor: isDone || boundary === undefined ? "" : `t:${boundary}`,
-  };
-}
-
-async function pageAcrossAssociations(
-  ctx: QueryCtx,
-  associationIds: Id<"associations">[],
-  filters: MemberFilters,
-  before: number | undefined,
-  pageSize: number
-) {
-  const lists = await Promise.all(
-    associationIds.map((associationId) =>
-      takeByAssociation(ctx, associationId, filters, before, pageSize)
-    )
-  );
-  const merged = lists
-    .flat()
-    .filter((member) => !filters.state || member.state === filters.state)
-    .sort((a, b) => b.createdAt - a.createdAt);
-  const members = merged.slice(0, pageSize);
-  const isDone = members.length < pageSize && lists.every((list) => list.length < pageSize);
-  const boundary =
-    members.at(-1)?.createdAt ??
-    lists.flat().reduce<number | undefined>((oldest, member) => {
-      if (oldest === undefined || member.createdAt < oldest) return member.createdAt;
-      return oldest;
-    }, undefined);
-
-  return {
-    members,
-    isDone,
-    continueCursor: isDone || boundary === undefined ? "" : `t:${boundary}`,
-  };
-}
-
-async function pageBySearch(
-  ctx: QueryCtx,
-  filters: MemberFilters,
-  allowedAssociationIds: Id<"associations">[] | null,
-  cursor: string | undefined,
-  pageSize: number
-) {
-  let searchCursor = cursor?.startsWith("s:") ? cursor.slice(2) : null;
-  let matches: Doc<"members">[] = [];
-  let isDone = false;
-  let continueCursor = "";
-  let scanned = 0;
-
-  while (matches.length === 0 && scanned < MAX_SCAN) {
-    const page = await ctx.db
-      .query("members")
-      .withSearchIndex("search_members", (q) => {
-        let search = q.search("searchText", filters.search!);
-        if (filters.associationId) search = search.eq("associationId", filters.associationId);
-        if (filters.state) search = search.eq("state", filters.state);
-        return search;
-      })
-      .paginate({ numItems: pageSize, cursor: searchCursor });
-
-    scanned += page.page.length;
-    matches = page.page.filter(
-      (member) =>
-        allowedAssociation(member, allowedAssociationIds, filters.associationId) &&
-        withinDates(member, filters)
-    );
-    isDone = page.isDone;
-    continueCursor = page.continueCursor;
-    searchCursor = page.continueCursor;
-    if (page.isDone) break;
-  }
-
-  return {
-    members: matches,
-    isDone,
-    continueCursor: isDone ? "" : `s:${continueCursor}`,
-  };
-}
-
-async function visibleTotal(
-  ctx: QueryCtx,
-  filters: MemberFilters,
-  allowedAssociationIds: Id<"associations">[] | null
-) {
-  if (filters.search || filters.state || filters.fromDate || filters.toDate) return null;
-
-  if (filters.associationId) {
-    if (allowedAssociationIds && !allowedAssociationIds.includes(filters.associationId)) return 0;
-    const doc = await ctx.db
-      .query("dashboard_stats")
-      .withIndex("byKey", (q) => q.eq("key", `assoc:${filters.associationId}`))
-      .unique();
-    return doc?.ready ? doc.total : null;
-  }
-
-  if (allowedAssociationIds === null) {
-    const global = await getGlobalStats(ctx);
-    return global?.ready ? global.total : null;
-  }
-
-  let total = 0;
-  for (const associationId of allowedAssociationIds) {
-    const doc = await ctx.db
-      .query("dashboard_stats")
-      .withIndex("byKey", (q) => q.eq("key", `assoc:${associationId}`))
-      .unique();
-    if (!doc?.ready) return null;
-    total += doc.total;
-  }
-  return total;
 }
 
 async function recentMembers(

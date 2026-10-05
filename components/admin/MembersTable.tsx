@@ -335,8 +335,10 @@ export function MembersTable() {
         {membersResult && membersResult.authorized && (
           <div className="flex flex-col gap-3 border-t border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-slate-500">
-              Showing {members.length} member{members.length === 1 ? "" : "s"}
-              {total !== null ? ` · ${total.toLocaleString()} total` : ""}
+              {total !== null
+                ? `Showing ${members.length.toLocaleString()} of ${total.toLocaleString()} member${total === 1 ? "" : "s"}`
+                : `Showing ${members.length} member${members.length === 1 ? "" : "s"}`}
+              {!membersResult.isDone ? " · more pages available" : ""}
             </p>
 
             <div className="flex flex-wrap items-center gap-2">
