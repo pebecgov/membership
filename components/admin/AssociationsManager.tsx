@@ -42,6 +42,7 @@ async function uploadLogoFile(
 export function AssociationsManager() {
   const result = useQuery(api.admin.listAssociations);
   const createAssociation = useMutation(api.admin.createAssociation);
+  const setAssociationActive = useMutation(api.admin.setAssociationActive);
   const generateLogoUploadUrl = useMutation(api.files.generateLogoUploadUrl);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -50,6 +51,7 @@ export function AssociationsManager() {
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [togglingId, setTogglingId] = useState<Id<"associations"> | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -118,6 +120,36 @@ export function AssociationsManager() {
       setError(e instanceof Error ? e.message : "Failed to add association.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleToggleActive(
+    associationId: Id<"associations">,
+    name: string,
+    isActive: boolean
+  ) {
+    const nextActive = !isActive;
+    const confirmed = window.confirm(
+      nextActive
+        ? `Re-enable "${name}" in the registration dropdown?`
+        : `Remove "${name}" from the registration dropdown?\n\nExisting members stay in the system. New registrations for this association will be blocked.`
+    );
+    if (!confirmed) return;
+
+    setTogglingId(associationId);
+    setError("");
+    setSuccess("");
+    try {
+      await setAssociationActive({ associationId, isActive: nextActive });
+      setSuccess(
+        nextActive
+          ? `${name} is active again and visible in the registration dropdown.`
+          : `${name} was removed from the registration dropdown.`
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update association.");
+    } finally {
+      setTogglingId(null);
     }
   }
 
@@ -229,6 +261,10 @@ export function AssociationsManager() {
           <h2 className="text-sm font-semibold text-[#0A1121]">
             All associations ({result.associations.length})
           </h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Inactive associations stay in admin views but are hidden from the public registration
+            dropdown.
+          </p>
         </div>
 
         {result.associations.length === 0 ? (
@@ -239,38 +275,58 @@ export function AssociationsManager() {
           <>
             <div className="divide-y divide-slate-100 md:hidden">
               {result.associations.map((assoc) => (
-                <div key={assoc.id} className="flex items-center gap-3 px-4 py-4">
-                  {assoc.logoUrl ? (
-                    <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md bg-slate-50">
-                      <Image
-                        src={assoc.logoUrl}
-                        alt={assoc.name}
-                        fill
-                        className="object-contain p-0.5"
-                        unoptimized
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-slate-100 text-[10px] text-slate-400">
-                      No logo
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium text-slate-800">{assoc.name}</p>
-                    <p className="font-mono text-xs text-slate-500">{assoc.code}</p>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-                      <span className="text-slate-600">{assoc.memberCount} members</span>
-                      <span
-                        className={`rounded-full px-2 py-0.5 font-medium ${
-                          assoc.isActive
-                            ? "bg-emerald-50 text-emerald-700"
-                            : "bg-slate-100 text-slate-500"
-                        }`}
-                      >
-                        {assoc.isActive ? "Active" : "Inactive"}
-                      </span>
+                <div key={assoc.id} className="space-y-3 px-4 py-4">
+                  <div className="flex items-center gap-3">
+                    {assoc.logoUrl ? (
+                      <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md bg-slate-50">
+                        <Image
+                          src={assoc.logoUrl}
+                          alt={assoc.name}
+                          fill
+                          className="object-contain p-0.5"
+                          unoptimized
+                        />
+                      </div>
+                    ) : (
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-slate-100 text-[10px] text-slate-400">
+                        No logo
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium text-slate-800">{assoc.name}</p>
+                      <p className="font-mono text-xs text-slate-500">{assoc.code}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                        <span className="text-slate-600">{assoc.memberCount} members</span>
+                        <span
+                          className={`rounded-full px-2 py-0.5 font-medium ${
+                            assoc.isActive
+                              ? "bg-emerald-50 text-emerald-700"
+                              : "bg-slate-100 text-slate-500"
+                          }`}
+                        >
+                          {assoc.isActive ? "Active" : "Inactive"}
+                        </span>
+                      </div>
                     </div>
                   </div>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => handleToggleActive(assoc.id, assoc.name, assoc.isActive)}
+                      disabled={togglingId === assoc.id}
+                      className={`w-full rounded-md border px-3 py-2 text-xs font-semibold transition disabled:opacity-50 ${
+                        assoc.isActive
+                          ? "border-amber-300 text-amber-800 hover:bg-amber-50"
+                          : "border-emerald-300 text-emerald-800 hover:bg-emerald-50"
+                      }`}
+                    >
+                      {togglingId === assoc.id
+                        ? "Updating…"
+                        : assoc.isActive
+                          ? "Remove from dropdown"
+                          : "Re-enable in dropdown"}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -284,6 +340,7 @@ export function AssociationsManager() {
                     <th className="px-5 py-3 font-semibold">Code</th>
                     <th className="px-5 py-3 font-semibold">Members</th>
                     <th className="px-5 py-3 font-semibold">Status</th>
+                    {isAdmin && <th className="px-5 py-3 font-semibold">Actions</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -318,6 +375,26 @@ export function AssociationsManager() {
                           {assoc.isActive ? "Active" : "Inactive"}
                         </span>
                       </td>
+                      {isAdmin && (
+                        <td className="px-5 py-3">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleActive(assoc.id, assoc.name, assoc.isActive)}
+                            disabled={togglingId === assoc.id}
+                            className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition disabled:opacity-50 ${
+                              assoc.isActive
+                                ? "border-amber-300 text-amber-800 hover:bg-amber-50"
+                                : "border-emerald-300 text-emerald-800 hover:bg-emerald-50"
+                            }`}
+                          >
+                            {togglingId === assoc.id
+                              ? "Updating…"
+                              : assoc.isActive
+                                ? "Remove from dropdown"
+                                : "Re-enable"}
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

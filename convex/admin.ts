@@ -727,6 +727,22 @@ export const createAssociation = mutation({
   },
 });
 
+export const setAssociationActive = mutation({
+  args: {
+    associationId: v.id("associations"),
+    isActive: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx);
+    const association = await ctx.db.get(args.associationId);
+    if (!association) {
+      throw new Error("Association not found.");
+    }
+    await ctx.db.patch(args.associationId, { isActive: args.isActive });
+    return { id: args.associationId, isActive: args.isActive };
+  },
+});
+
 export const deleteMember = mutation({
   args: { memberId: v.id("members") },
   handler: async (ctx, { memberId }) => {

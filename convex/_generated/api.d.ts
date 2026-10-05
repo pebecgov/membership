@@ -14,6 +14,7 @@ import type * as associationUtils from "../associationUtils.js";
 import type * as associations from "../associations.js";
 import type * as files from "../files.js";
 import type * as http from "../http.js";
+import type * as memberStats from "../memberStats.js";
 import type * as members from "../members.js";
 import type * as users from "../users.js";
 import type * as utils from "../utils.js";
@@ -33,6 +34,7 @@ declare const fullApi: ApiFromModules<{
   associations: typeof associations;
   files: typeof files;
   http: typeof http;
+  memberStats: typeof memberStats;
   members: typeof members;
   users: typeof users;
   utils: typeof utils;
