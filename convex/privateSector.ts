@@ -1,9 +1,20 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
-import { getPortalAccess } from "./adminAuth";
+import { getPortalAccess, requireAdmin } from "./adminAuth";
+import { BUSINESS_SECTORS } from "../lib/businessSectors";
 import { LOCAL_GOVERNMENTS } from "../lib/nigerianLgas";
 import { NIGERIAN_STATES } from "../lib/nigerianStates";
 import { isValidNigerianPhone, normalizePhone } from "./utils";
+
+const SETTINGS_KEY = "private_sector";
+
+async function sectorSectionEnabled(ctx: QueryCtx | MutationCtx) {
+  const row = await ctx.db
+    .query("portal_settings")
+    .withIndex("byKey", (q) => q.eq("key", SETTINGS_KEY))
+    .unique();
+  return row?.showSectors ?? true;
+}
 
 const coverageValidator = v.array(
   v.object({
@@ -56,6 +67,7 @@ export const submit = mutation({
     phone: v.string(),
     email: v.string(),
     coverage: coverageValidator,
+    sectors: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const organizationName = args.organizationName.trim();
@@ -94,6 +106,22 @@ export const submit = mutation({
 
     const coverage = normalizeCoverage(args.coverage);
     const lgaCount = coverage.reduce((sum, entry) => sum + entry.lgas.length, 0);
+    const showSectors = await sectorSectionEnabled(ctx);
+    const allowedSectors = new Set<string>(BUSINESS_SECTORS);
+    const sectors = showSectors
+      ? [...new Set((args.sectors ?? []).map((sector) => sector.trim()).filter(Boolean))].sort((a, b) =>
+          a.localeCompare(b)
+        )
+      : [];
+
+    if (showSectors && sectors.length === 0) {
+      throw new Error("Select at least one sector.");
+    }
+    for (const sector of sectors) {
+      if (!allowedSectors.has(sector)) {
+        throw new Error(`Unknown sector: ${sector}`);
+      }
+    }
 
     const id = await ctx.db.insert("private_sector_engagements", {
       organizationName,
@@ -104,6 +132,7 @@ export const submit = mutation({
       coverage,
       stateCount: coverage.length,
       lgaCount,
+      sectors,
       createdAt: Date.now(),
     });
 
@@ -146,8 +175,38 @@ export const list = query({
         coverage: row.coverage,
         stateCount: row.stateCount,
         lgaCount: row.lgaCount,
+        sectors: row.sectors ?? [],
         createdAt: row.createdAt,
       })),
     };
+  },
+});
+
+export const getFormSettings = query({
+  args: {},
+  handler: async (ctx) => {
+    return { showSectors: await sectorSectionEnabled(ctx) };
+  },
+});
+
+export const setShowSectors = mutation({
+  args: { showSectors: v.boolean() },
+  handler: async (ctx, { showSectors }) => {
+    await requireAdmin(ctx);
+    const existing = await ctx.db
+      .query("portal_settings")
+      .withIndex("byKey", (q) => q.eq("key", SETTINGS_KEY))
+      .unique();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, { showSectors, updatedAt: Date.now() });
+      return existing._id;
+    }
+
+    return await ctx.db.insert("portal_settings", {
+      key: SETTINGS_KEY,
+      showSectors,
+      updatedAt: Date.now(),
+    });
   },
 });

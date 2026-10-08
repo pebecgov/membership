@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "@/convex/_generated/api";
@@ -17,7 +17,11 @@ export default function AdminPrivateSectorPage() {
   const router = useRouter();
   const roleResult = useQuery(api.admin.getPortalRole);
   const result = useQuery(api.privateSector.list);
+  const settings = useQuery(api.privateSector.getFormSettings);
+  const setShowSectors = useMutation(api.privateSector.setShowSectors);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [savingToggle, setSavingToggle] = useState(false);
+  const [toggleError, setToggleError] = useState("");
   const isViewer = roleResult?.authorized && roleResult.role === "viewer";
 
   useEffect(() => {
@@ -40,6 +44,39 @@ export default function AdminPrivateSectorPage() {
           Organizations and the local governments they cover, state by state
         </p>
       </div>
+
+      <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5">
+        <div>
+          <p className="text-sm font-semibold text-[#0A1121]">Sector checkboxes</p>
+          <p className="mt-1 text-sm text-slate-500">
+            {settings?.showSectors
+              ? "Organizations can select the sectors they work in."
+              : "The sector section is hidden on the public form."}
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={savingToggle || settings === undefined}
+          onClick={async () => {
+            if (!settings) return;
+            setSavingToggle(true);
+            setToggleError("");
+            try {
+              await setShowSectors({ showSectors: !settings.showSectors });
+            } catch (error) {
+              setToggleError(error instanceof Error ? error.message : "Could not update the setting.");
+            } finally {
+              setSavingToggle(false);
+            }
+          }}
+          className={`rounded-md px-4 py-2 text-sm font-semibold text-white transition disabled:opacity-50 ${
+            settings?.showSectors ? "bg-amber-700 hover:bg-amber-800" : "bg-[#0A1121] hover:bg-[#1a2235]"
+          }`}
+        >
+          {savingToggle ? "Saving…" : settings?.showSectors ? "Hide sector section" : "Show sector section"}
+        </button>
+      </div>
+      {toggleError && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{toggleError}</p>}
 
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
         {result.engagements.length === 0 ? (
@@ -65,6 +102,11 @@ export default function AdminPrivateSectorPage() {
                       <span className="mt-1 block text-xs text-slate-500">
                         {entry.email} · {entry.phone}
                       </span>
+                      {entry.sectors.length > 0 && (
+                        <span className="mt-1 block text-xs text-slate-500">
+                          Sectors: {entry.sectors.join(", ")}
+                        </span>
+                      )}
                     </span>
                     <span className="text-sm text-slate-600">
                       {entry.stateCount} state{entry.stateCount === 1 ? "" : "s"} · {entry.lgaCount}{" "}

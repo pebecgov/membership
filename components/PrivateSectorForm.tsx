@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import { BUSINESS_SECTORS } from "@/lib/businessSectors";
 import { LOCAL_GOVERNMENTS, localGovernmentsFor } from "@/lib/nigerianLgas";
 import { NIGERIAN_STATES } from "@/lib/nigerianStates";
 
@@ -10,11 +11,14 @@ type Coverage = Record<string, string[]>;
 
 export function PrivateSectorForm() {
   const submit = useMutation(api.privateSector.submit);
+  const settings = useQuery(api.privateSector.getFormSettings);
+  const showSectors = settings?.showSectors ?? false;
   const [organizationName, setOrganizationName] = useState("");
   const [focalPerson, setFocalPerson] = useState("");
   const [cac, setCac] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
+  const [sectors, setSectors] = useState<string[]>([]);
   const [activeState, setActiveState] = useState("");
   const [coverage, setCoverage] = useState<Coverage>({});
   const [loading, setLoading] = useState(false);
@@ -47,6 +51,12 @@ export function PrivateSectorForm() {
     });
   }
 
+  function toggleSector(sector: string) {
+    setSectors((current) =>
+      current.includes(sector) ? current.filter((item) => item !== sector) : [...current, sector]
+    );
+  }
+
   function toggleLga(lga: string) {
     if (!activeState) return;
     const selected = new Set(selectedForActive);
@@ -72,6 +82,11 @@ export function PrivateSectorForm() {
       return;
     }
 
+    if (showSectors && sectors.length === 0) {
+      setError("Select at least one sector.");
+      return;
+    }
+
     setLoading(true);
     try {
       const result = await submit({
@@ -84,6 +99,7 @@ export function PrivateSectorForm() {
           state: entry.state,
           lgas: coverage[entry.state],
         })),
+        sectors: showSectors ? sectors : [],
       });
       setSuccess(result);
     } catch (err) {
@@ -173,6 +189,40 @@ export function PrivateSectorForm() {
             />
           </Field>
         </div>
+
+        {showSectors && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 sm:p-5">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold text-[#0A1121]">Sectors</p>
+              <p className="text-xs text-slate-500">
+                {sectors.length} selected
+              </p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {BUSINESS_SECTORS.map((sector) => {
+                const checked = sectors.includes(sector);
+                return (
+                  <label
+                    key={sector}
+                    className={`flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2.5 text-sm ${
+                      checked
+                        ? "border-[#0A1121] bg-white"
+                        : "border-slate-200 bg-white hover:border-slate-300"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleSector(sector)}
+                      className="h-4 w-4 rounded border-slate-300 text-[#0A1121] focus:ring-[#0A1121]"
+                    />
+                    <span className="text-slate-800">{sector}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 sm:p-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -287,7 +337,7 @@ export function PrivateSectorForm() {
 
         {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
 
-        <button type="submit" disabled={loading} className={btnPrimary}>
+        <button type="submit" disabled={loading || settings === undefined} className={btnPrimary}>
           {loading ? "Submitting…" : "Submit engagement"}
         </button>
       </div>

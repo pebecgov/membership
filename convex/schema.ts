@@ -90,9 +90,16 @@ export default defineSchema({
     ),
     stateCount: v.number(),
     lgaCount: v.number(),
+    sectors: v.optional(v.array(v.string())),
     createdAt: v.number(),
   })
     .index("byEmail", ["email"])
     .index("byCac", ["cac"])
     .index("byCreatedAt", ["createdAt"]),
+
+  portal_settings: defineTable({
+    key: v.string(),
+    showSectors: v.boolean(),
+    updatedAt: v.number(),
+  }).index("byKey", ["key"]),
 });
