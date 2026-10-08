@@ -16,6 +16,7 @@ import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as memberStats from "../memberStats.js";
 import type * as members from "../members.js";
+import type * as privateSector from "../privateSector.js";
 import type * as users from "../users.js";
 import type * as utils from "../utils.js";
 import type * as viewerAccess from "../viewerAccess.js";
@@ -36,6 +37,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   memberStats: typeof memberStats;
   members: typeof members;
+  privateSector: typeof privateSector;
   users: typeof users;
   utils: typeof utils;
   viewerAccess: typeof viewerAccess;

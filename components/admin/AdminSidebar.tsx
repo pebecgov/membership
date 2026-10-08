@@ -16,6 +16,7 @@ const allLinks: Array<{
   { href: "/admin", label: "Overview", exact: true, roles: ["admin", "viewer"] },
   { href: "/admin/members", label: "Members", roles: ["admin", "viewer"] },
   { href: "/admin/associations", label: "Associations", roles: ["admin"] },
+  { href: "/admin/private-sector", label: "Private sector", roles: ["admin"] },
   { href: "/admin/viewers", label: "Viewer access", roles: ["admin"] },
 ];
 

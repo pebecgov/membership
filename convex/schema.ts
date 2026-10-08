@@ -75,4 +75,24 @@ export default defineSchema({
     rebuilding: v.boolean(),
     updatedAt: v.number(),
   }).index("byKey", ["key"]),
+
+  private_sector_engagements: defineTable({
+    organizationName: v.string(),
+    focalPerson: v.string(),
+    cac: v.string(),
+    phone: v.string(),
+    email: v.string(),
+    coverage: v.array(
+      v.object({
+        state: v.string(),
+        lgas: v.array(v.string()),
+      })
+    ),
+    stateCount: v.number(),
+    lgaCount: v.number(),
+    createdAt: v.number(),
+  })
+    .index("byEmail", ["email"])
+    .index("byCac", ["cac"])
+    .index("byCreatedAt", ["createdAt"]),
 });

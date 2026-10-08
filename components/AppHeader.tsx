@@ -8,6 +8,10 @@ export function AppHeader() {
   if (pathname.startsWith("/admin") || pathname.startsWith("/sign-in")) {
     return null;
   }
-  const active = pathname === "/verify" ? "verify" : "register";
+  const active = pathname.startsWith("/private-sector")
+    ? "private-sector"
+    : pathname === "/verify"
+      ? "verify"
+      : "register";
   return <Header active={active} />;
 }
